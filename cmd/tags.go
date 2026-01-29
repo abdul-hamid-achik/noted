@@ -10,12 +10,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type tagItem struct {
+	Name  string `json:"name"`
+	Count *int64 `json:"count,omitempty"`
+}
+
 var tagsCmd = &cobra.Command{
 	Use:   "tags",
 	Short: "List all tags",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		showCount, _ := cmd.Flags().GetBool("count")
 		deleteUnused, _ := cmd.Flags().GetBool("delete-unused")
+		asJSON, _ := cmd.Flags().GetBool("json")
 
 		ctx := context.Background()
 
@@ -23,6 +29,9 @@ var tagsCmd = &cobra.Command{
 			count, err := database.DeleteUnusedTags(ctx)
 			if err != nil {
 				return err
+			}
+			if asJSON {
+				return outputJSON(map[string]int64{"deleted_count": count})
 			}
 			fmt.Printf("Deleted %d unused tag(s).\n", count)
 			return nil
@@ -32,6 +41,18 @@ var tagsCmd = &cobra.Command{
 			tags, err := database.GetTagsWithCount(ctx)
 			if err != nil {
 				return err
+			}
+
+			if asJSON {
+				items := make([]tagItem, len(tags))
+				for i, tag := range tags {
+					count := tag.NoteCount
+					items[i] = tagItem{
+						Name:  tag.Name,
+						Count: &count,
+					}
+				}
+				return outputJSON(items)
 			}
 
 			if len(tags) == 0 {
@@ -46,6 +67,14 @@ var tagsCmd = &cobra.Command{
 			tags, err := database.ListTags(ctx)
 			if err != nil {
 				return err
+			}
+
+			if asJSON {
+				items := make([]tagItem, len(tags))
+				for i, tag := range tags {
+					items[i] = tagItem{Name: tag.Name}
+				}
+				return outputJSON(items)
 			}
 
 			if len(tags) == 0 {
@@ -67,4 +96,5 @@ func init() {
 
 	tagsCmd.Flags().BoolP("count", "c", false, "Show note count per tag")
 	tagsCmd.Flags().BoolP("delete-unused", "d", false, "Delete orphan tags")
+	tagsCmd.Flags().BoolP("json", "j", false, "Output as JSON")
 }

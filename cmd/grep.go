@@ -11,6 +11,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type grepResultItem struct {
+	ID        int64  `json:"id"`
+	Title     string `json:"title"`
+	UpdatedAt string `json:"updated_at"`
+}
+
 var grepCmd = &cobra.Command{
 	Use:   "grep <pattern>",
 	Short: "Search notes by text",
@@ -18,6 +24,7 @@ var grepCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pattern := args[0]
 		limit, _ := cmd.Flags().GetInt("limit")
+		asJSON, _ := cmd.Flags().GetBool("json")
 
 		if limit < 1 {
 			return fmt.Errorf("limit must be at least 1")
@@ -37,6 +44,18 @@ var grepCmd = &cobra.Command{
 			return err
 		}
 
+		if asJSON {
+			items := make([]grepResultItem, len(notes))
+			for i, note := range notes {
+				items[i] = grepResultItem{
+					ID:        note.ID,
+					Title:     note.Title,
+					UpdatedAt: note.UpdatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+				}
+			}
+			return outputJSON(items)
+		}
+
 		if len(notes) == 0 {
 			fmt.Println("No matching notes found.")
 			return nil
@@ -54,4 +73,5 @@ func init() {
 	rootCmd.AddCommand(grepCmd)
 
 	grepCmd.Flags().IntP("limit", "n", 20, "Max results")
+	grepCmd.Flags().BoolP("json", "j", false, "Output as JSON")
 }

@@ -13,12 +13,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type noteDetail struct {
+	ID        int64    `json:"id"`
+	Title     string   `json:"title"`
+	Content   string   `json:"content"`
+	Tags      []string `json:"tags"`
+	CreatedAt string   `json:"created_at"`
+	UpdatedAt string   `json:"updated_at"`
+}
+
 var showCmd = &cobra.Command{
 	Use:   "show <id>",
 	Short: "Display a note",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		raw, _ := cmd.Flags().GetBool("raw")
+		asJSON, _ := cmd.Flags().GetBool("json")
 
 		id, err := strconv.ParseInt(args[0], 10, 64)
 		if err != nil {
@@ -44,16 +54,29 @@ var showCmd = &cobra.Command{
 			return err
 		}
 
+		tagNames := make([]string, len(tags))
+		for i, t := range tags {
+			tagNames[i] = t.Name
+		}
+
+		if asJSON {
+			detail := noteDetail{
+				ID:        note.ID,
+				Title:     note.Title,
+				Content:   note.Content,
+				Tags:      tagNames,
+				CreatedAt: note.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+				UpdatedAt: note.UpdatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+			}
+			return outputJSON(detail)
+		}
+
 		fmt.Printf("# %s\n\n", note.Title)
 		fmt.Printf("ID: %d\n", note.ID)
 		fmt.Printf("Created: %s\n", note.CreatedAt.Time.Format("2006-01-02 15:04"))
 		fmt.Printf("Updated: %s\n", note.UpdatedAt.Time.Format("2006-01-02 15:04"))
 
 		if len(tags) > 0 {
-			tagNames := make([]string, len(tags))
-			for i, t := range tags {
-				tagNames[i] = t.Name
-			}
 			fmt.Printf("Tags: %s\n", strings.Join(tagNames, ", "))
 		}
 
@@ -70,4 +93,5 @@ func init() {
 	rootCmd.AddCommand(showCmd)
 
 	showCmd.Flags().BoolP("raw", "r", false, "Output raw markdown only")
+	showCmd.Flags().BoolP("json", "j", false, "Output as JSON")
 }

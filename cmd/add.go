@@ -12,14 +12,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type addResult struct {
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+}
+
 var addCmd = &cobra.Command{
 	Use:   "add",
-	Short: "A brief description of your command",
-	Long: "",
+	Short: "Add a new note",
+	Long:  "",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		title, _ := cmd.Flags().GetString("title")
 		tags, _ := cmd.Flags().GetString("tags")
 		content, _ := cmd.Flags().GetString("content")
+		asJSON, _ := cmd.Flags().GetBool("json")
 
 		if content == "" {
 			var err error
@@ -31,7 +37,7 @@ var addCmd = &cobra.Command{
 
 		ctx := context.Background()
 		note, err := database.CreateNote(ctx, db.CreateNoteParams{
-			Title: title,
+			Title:   title,
 			Content: content,
 		})
 
@@ -54,13 +60,20 @@ var addCmd = &cobra.Command{
 
 				err = database.AddTagToNote(ctx, db.AddTagToNoteParams{
 					NoteID: note.ID,
-					TagID: tag.ID,
+					TagID:  tag.ID,
 				})
 
 				if err != nil {
 					return err
 				}
 			}
+		}
+
+		if asJSON {
+			return outputJSON(addResult{
+				ID:    note.ID,
+				Title: note.Title,
+			})
 		}
 
 		fmt.Printf("Created note #%d: %s\n", note.ID, note.Title)
@@ -74,6 +87,7 @@ func init() {
 	addCmd.Flags().StringP("title", "t", "", "Note title (required)")
 	addCmd.Flags().StringP("tags", "T", "", "Comma-separated tags")
 	addCmd.Flags().StringP("content", "c", "", "Note content")
+	addCmd.Flags().BoolP("json", "j", false, "Output as JSON")
 
 	_ = addCmd.MarkFlagRequired("title")
 }

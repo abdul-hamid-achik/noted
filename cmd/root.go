@@ -5,6 +5,8 @@ Copyright © 2026 abdul hamid <abdulachik@icloud.com>
 package cmd
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 
 	"database/sql"
@@ -55,6 +57,15 @@ func Execute() {
 
 func init() {
 	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+}
+
+func outputJSON(v interface{}) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
+	return nil
 }
 
 

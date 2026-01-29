@@ -14,6 +14,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type editResult struct {
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+}
+
 var editCmd = &cobra.Command{
 	Use:   "edit <id>",
 	Short: "Edit a note",
@@ -22,6 +27,7 @@ var editCmd = &cobra.Command{
 		title, _ := cmd.Flags().GetString("title")
 		content, _ := cmd.Flags().GetString("content")
 		tags, _ := cmd.Flags().GetString("tags")
+		asJSON, _ := cmd.Flags().GetBool("json")
 
 		id, err := strconv.ParseInt(args[0], 10, 64)
 		if err != nil {
@@ -93,6 +99,13 @@ var editCmd = &cobra.Command{
 			}
 		}
 
+		if asJSON {
+			return outputJSON(editResult{
+				ID:    id,
+				Title: newTitle,
+			})
+		}
+
 		fmt.Printf("Updated note #%d\n", id)
 		return nil
 	},
@@ -104,4 +117,5 @@ func init() {
 	editCmd.Flags().StringP("title", "t", "", "New title")
 	editCmd.Flags().StringP("content", "c", "", "New content")
 	editCmd.Flags().StringP("tags", "T", "", "Replace tags (comma-separated)")
+	editCmd.Flags().BoolP("json", "j", false, "Output as JSON")
 }
