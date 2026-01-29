@@ -1,0 +1,70 @@
+ # yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+
+vars:
+  BINARY_NAME: noted
+  BINARY_DIR: bin
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  generate:
+    desc: Generate sqlc code
+    cmds:
+      - sqlc generate
+    sources:
+      - sql/*.sql
+      - sqlc.yaml
+    generates:
+      - internal/db/*.go
+
+  build:
+    desc: Build the binary
+    deps: [generate]
+    vars:
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+      COMMIT:
+        sh: git rev-parse --short HEAD 2>/dev/null || echo "none"
+      BUILD_DATE:
+        sh: date -u +%Y-%m-%dT%H:%M:%SZ
+    cmds:
+      - go build -ldflags "-X github.com/abdul-hamid-achik/noted/cmd.Version={{.VERSION}} -X github.com/abdul-hamid-achik/noted/cmd.Commit={{.COMMIT}} -X github.com/abdul-hamid-achik/noted/cmd.BuildDate={{.BUILD_DATE}}" -o {{.BINARY_DIR}}/{{.BINARY_NAME}} .
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.BINARY_DIR}}/{{.BINARY_NAME}}"
+
+  install:
+    desc: Install to GOPATH/bin
+    deps: [generate]
+    cmds:
+      - go install .
+
+  lint:
+    desc: Run linter
+    cmds:
+      - golangci-lint run ./...
+
+  test:
+    desc: Run tests
+    deps: [generate]
+    cmds:
+      - go test -v ./...
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf {{.BINARY_DIR}}
+      - rm -rf internal/db/*.go
+
+  dev:
+    desc: Build and run
+    deps: [build]
+    cmds:
+      - ./{{.BINARY_DIR}}/{{.BINARY_NAME}} {{.CLI_ARGS}}     -
