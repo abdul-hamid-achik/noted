@@ -14,8 +14,8 @@ A fast, lightweight CLI knowledge base for capturing and organizing notes from y
 ## Quick Start
 
 ```bash
-# Install
-go install github.com/abdul-hamid-achik/noted@latest
+# Install via Homebrew (macOS/Linux)
+brew install abdul-hamid-achik/tap/noted
 
 # Create your first note
 noted add -t "Meeting Notes" -c "Discussed Q1 roadmap" -T "work,meetings"
@@ -29,34 +29,36 @@ noted grep "roadmap"
 
 ## Installation
 
-### Prerequisites
+### Homebrew (Recommended)
 
-- Go 1.21 or later
-- SQLite (included via modernc.org/sqlite)
+```bash
+brew install abdul-hamid-achik/tap/noted
+```
+
+### Go Install
+
+Requires Go 1.21 or later:
+
+```bash
+go install github.com/abdul-hamid-achik/noted@latest
+```
+
+### Download Binary
+
+Download pre-built binaries from the [releases page](https://github.com/abdul-hamid-achik/noted/releases).
+
+Available for:
+- macOS (Intel and Apple Silicon)
+- Linux (amd64 and arm64)
+- Windows (amd64 and arm64)
 
 ### From Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/abdul-hamid-achik/noted.git
 cd noted
-
-# Build (requires Task)
-task build
-
-# Or with go directly
-go build -o bin/noted .
-
-# Install to GOPATH/bin
-task install
-# or
-go install .
-```
-
-### Using Go Install
-
-```bash
-go install github.com/abdul-hamid-achik/noted@latest
+task build      # or: go build -o bin/noted .
+task install    # or: go install .
 ```
 
 ## Usage
