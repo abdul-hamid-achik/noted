@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 const addTagToNote = `-- name: AddTagToNote :exec
@@ -30,7 +31,7 @@ func (q *Queries) AddTagToNote(ctx context.Context, arg AddTagToNoteParams) erro
 const createNote = `-- name: CreateNote :one
 INSERT INTO notes (title, content)
 VALUES (?, ?)
-RETURNING id, title, content, created_at, updated_at, embedding_synced
+RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref
 `
 
 type CreateNoteParams struct {
@@ -48,6 +49,46 @@ func (q *Queries) CreateNote(ctx context.Context, arg CreateNoteParams) (Note, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EmbeddingSynced,
+		&i.ExpiresAt,
+		&i.Source,
+		&i.SourceRef,
+	)
+	return i, err
+}
+
+const createNoteWithTTL = `-- name: CreateNoteWithTTL :one
+INSERT INTO notes (title, content, expires_at, source, source_ref)
+VALUES (?, ?, ?, ?, ?)
+RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref
+`
+
+type CreateNoteWithTTLParams struct {
+	Title     string         `json:"title"`
+	Content   string         `json:"content"`
+	ExpiresAt sql.NullTime   `json:"expires_at"`
+	Source    sql.NullString `json:"source"`
+	SourceRef sql.NullString `json:"source_ref"`
+}
+
+func (q *Queries) CreateNoteWithTTL(ctx context.Context, arg CreateNoteWithTTLParams) (Note, error) {
+	row := q.db.QueryRowContext(ctx, createNoteWithTTL,
+		arg.Title,
+		arg.Content,
+		arg.ExpiresAt,
+		arg.Source,
+		arg.SourceRef,
+	)
+	var i Note
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Content,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EmbeddingSynced,
+		&i.ExpiresAt,
+		&i.Source,
+		&i.SourceRef,
 	)
 	return i, err
 }
@@ -66,6 +107,14 @@ func (q *Queries) CreateTag(ctx context.Context, name string) (Tag, error) {
 	var i Tag
 	err := row.Scan(&i.ID, &i.Name)
 	return i, err
+}
+
+const deleteExpiredNotes = `-- name: DeleteExpiredNotes :execresult
+DELETE FROM notes WHERE expires_at IS NOT NULL AND expires_at < datetime('now')
+`
+
+func (q *Queries) DeleteExpiredNotes(ctx context.Context) (sql.Result, error) {
+	return q.db.ExecContext(ctx, deleteExpiredNotes)
 }
 
 const deleteNote = `-- name: DeleteNote :exec
@@ -102,7 +151,7 @@ func (q *Queries) DeleteUnusedTags(ctx context.Context) (int64, error) {
 }
 
 const getAllNotes = `-- name: GetAllNotes :many
-SELECT id, title, content, created_at, updated_at, embedding_synced FROM notes ORDER BY created_at DESC
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes ORDER BY created_at DESC
 `
 
 func (q *Queries) GetAllNotes(ctx context.Context) ([]Note, error) {
@@ -121,6 +170,46 @@ func (q *Queries) GetAllNotes(ctx context.Context) ([]Note, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getExpiredNotes = `-- name: GetExpiredNotes :many
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes WHERE expires_at IS NOT NULL AND expires_at < datetime('now')
+`
+
+func (q *Queries) GetExpiredNotes(ctx context.Context) ([]Note, error) {
+	rows, err := q.db.QueryContext(ctx, getExpiredNotes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Note{}
+	for rows.Next() {
+		var i Note
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
 		); err != nil {
 			return nil, err
 		}
@@ -136,7 +225,7 @@ func (q *Queries) GetAllNotes(ctx context.Context) ([]Note, error) {
 }
 
 const getNote = `-- name: GetNote :one
-SELECT id, title, content, created_at, updated_at, embedding_synced FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes
 WHERE id = ?
 `
 
@@ -150,12 +239,15 @@ func (q *Queries) GetNote(ctx context.Context, id int64) (Note, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EmbeddingSynced,
+		&i.ExpiresAt,
+		&i.Source,
+		&i.SourceRef,
 	)
 	return i, err
 }
 
 const getNotesByTagName = `-- name: GetNotesByTagName :many
-SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced FROM notes n
+SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced, n.expires_at, n.source, n.source_ref FROM notes n
 INNER JOIN note_tags nt ON n.id = nt.note_id
 INNER JOIN tags t ON nt.tag_id = t.id
 WHERE t.name = ?
@@ -178,6 +270,9 @@ func (q *Queries) GetNotesByTagName(ctx context.Context, name string) ([]Note, e
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
 		); err != nil {
 			return nil, err
 		}
@@ -193,7 +288,7 @@ func (q *Queries) GetNotesByTagName(ctx context.Context, name string) ([]Note, e
 }
 
 const getNotesForTag = `-- name: GetNotesForTag :many
-SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced FROM notes n
+SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced, n.expires_at, n.source, n.source_ref FROM notes n
 INNER JOIN note_tags nt ON n.id = nt.note_id
 WHERE nt.tag_id = ?
 ORDER BY n.created_at DESC
@@ -215,6 +310,46 @@ func (q *Queries) GetNotesForTag(ctx context.Context, tagID int64) ([]Note, erro
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getNotesSince = `-- name: GetNotesSince :many
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes WHERE created_at >= ? ORDER BY created_at DESC
+`
+
+func (q *Queries) GetNotesSince(ctx context.Context, createdAt sql.NullTime) ([]Note, error) {
+	rows, err := q.db.QueryContext(ctx, getNotesSince, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Note{}
+	for rows.Next() {
+		var i Note
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
 		); err != nil {
 			return nil, err
 		}
@@ -309,7 +444,7 @@ func (q *Queries) GetTagsWithCount(ctx context.Context) ([]GetTagsWithCountRow, 
 }
 
 const getUnsynced = `-- name: GetUnsynced :many
-SELECT id, title, content, created_at, updated_at, embedding_synced FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes
 WHERE embedding_synced = FALSE
 `
 
@@ -329,6 +464,9 @@ func (q *Queries) GetUnsynced(ctx context.Context) ([]Note, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
 		); err != nil {
 			return nil, err
 		}
@@ -344,7 +482,7 @@ func (q *Queries) GetUnsynced(ctx context.Context) ([]Note, error) {
 }
 
 const listNotes = `-- name: ListNotes :many
-SELECT id, title, content, created_at, updated_at, embedding_synced FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes
 ORDER BY created_at DESC
 LIMIT ? OFFSET ?
 `
@@ -370,6 +508,9 @@ func (q *Queries) ListNotes(ctx context.Context, arg ListNotesParams) ([]Note, e
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
 		); err != nil {
 			return nil, err
 		}
@@ -448,7 +589,7 @@ func (q *Queries) RemoveTagFromNote(ctx context.Context, arg RemoveTagFromNotePa
 }
 
 const searchNotesByTitle = `-- name: SearchNotesByTitle :many
-SELECT id, title, content, created_at, updated_at, embedding_synced FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes
 WHERE title LIKE ?
 ORDER BY created_at DESC
 `
@@ -469,6 +610,9 @@ func (q *Queries) SearchNotesByTitle(ctx context.Context, title string) ([]Note,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
 		); err != nil {
 			return nil, err
 		}
@@ -484,7 +628,7 @@ func (q *Queries) SearchNotesByTitle(ctx context.Context, title string) ([]Note,
 }
 
 const searchNotesContent = `-- name: SearchNotesContent :many
-SELECT id, title, content, created_at, updated_at, embedding_synced FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes
 WHERE content LIKE ? OR title LIKE ?
 ORDER BY updated_at DESC
 LIMIT ?
@@ -512,6 +656,9 @@ func (q *Queries) SearchNotesContent(ctx context.Context, arg SearchNotesContent
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
 		); err != nil {
 			return nil, err
 		}
@@ -530,7 +677,7 @@ const updateNote = `-- name: UpdateNote :one
 UPDATE notes
 SET title = ?, content = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, content, created_at, updated_at, embedding_synced
+RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref
 `
 
 type UpdateNoteParams struct {
@@ -549,6 +696,24 @@ func (q *Queries) UpdateNote(ctx context.Context, arg UpdateNoteParams) (Note, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EmbeddingSynced,
+		&i.ExpiresAt,
+		&i.Source,
+		&i.SourceRef,
 	)
 	return i, err
+}
+
+const updateNoteSource = `-- name: UpdateNoteSource :exec
+UPDATE notes SET source = ?, source_ref = ? WHERE id = ?
+`
+
+type UpdateNoteSourceParams struct {
+	Source    sql.NullString `json:"source"`
+	SourceRef sql.NullString `json:"source_ref"`
+	ID        int64          `json:"id"`
+}
+
+func (q *Queries) UpdateNoteSource(ctx context.Context, arg UpdateNoteSourceParams) error {
+	_, err := q.db.ExecContext(ctx, updateNoteSource, arg.Source, arg.SourceRef, arg.ID)
+	return err
 }

@@ -3,6 +3,11 @@ INSERT INTO notes (title, content)
 VALUES (?, ?)
 RETURNING *;
 
+-- name: CreateNoteWithTTL :one
+INSERT INTO notes (title, content, expires_at, source, source_ref)
+VALUES (?, ?, ?, ?, ?)
+RETURNING *;
+
 -- name: GetNote :one
 SELECT * FROM notes
 WHERE id = ?;
@@ -108,3 +113,15 @@ LIMIT ?;
 
 -- name: GetAllNotes :many
 SELECT * FROM notes ORDER BY created_at DESC;
+
+-- name: DeleteExpiredNotes :execresult
+DELETE FROM notes WHERE expires_at IS NOT NULL AND expires_at < datetime('now');
+
+-- name: GetExpiredNotes :many
+SELECT * FROM notes WHERE expires_at IS NOT NULL AND expires_at < datetime('now');
+
+-- name: UpdateNoteSource :exec
+UPDATE notes SET source = ?, source_ref = ? WHERE id = ?;
+
+-- name: GetNotesSince :many
+SELECT * FROM notes WHERE created_at >= ? ORDER BY created_at DESC;

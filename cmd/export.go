@@ -5,11 +5,13 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/abdul-hamid-achik/noted/internal/db"
 	"github.com/spf13/cobra"
@@ -22,15 +24,32 @@ type exportedNote struct {
 	Tags      []string `json:"tags"`
 	CreatedAt string   `json:"created_at"`
 	UpdatedAt string   `json:"updated_at"`
+	ExpiresAt string   `json:"expires_at,omitempty"`
+	Source    string   `json:"source,omitempty"`
+	SourceRef string   `json:"source_ref,omitempty"`
 }
 
 var exportCmd = &cobra.Command{
 	Use:   "export",
 	Short: "Export notes",
+	Long: `Export notes to various formats.
+
+Supported formats:
+  - markdown: Single file with YAML frontmatter (default)
+  - json: JSON array
+  - jsonl: JSON Lines (one JSON object per line)
+
+Examples:
+  noted export                              # Export all as markdown to stdout
+  noted export --format json -o notes.json  # Export as JSON to file
+  noted export --format jsonl               # Export as JSON Lines
+  noted export --tag project                # Export only notes with 'project' tag
+  noted export --since 2025-01-01           # Export notes created since date`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		format, _ := cmd.Flags().GetString("format")
 		output, _ := cmd.Flags().GetString("output")
 		tag, _ := cmd.Flags().GetString("tag")
+		since, _ := cmd.Flags().GetString("since")
 
 		ctx := context.Background()
 		var notes []db.Note
@@ -38,6 +57,13 @@ var exportCmd = &cobra.Command{
 
 		if tag != "" {
 			notes, err = database.GetNotesByTagName(ctx, tag)
+		} else if since != "" {
+			// Parse since date
+			sinceTime, parseErr := time.Parse("2006-01-02", since)
+			if parseErr != nil {
+				return fmt.Errorf("invalid --since date format (use YYYY-MM-DD): %w", parseErr)
+			}
+			notes, err = database.GetNotesSince(ctx, sql.NullTime{Time: sinceTime, Valid: true})
 		} else {
 			notes, err = database.GetAllNotes(ctx)
 		}
@@ -63,41 +89,77 @@ var exportCmd = &cobra.Command{
 		switch format {
 		case "json":
 			return exportJSON(ctx, w, notes)
+		case "jsonl":
+			return exportJSONL(ctx, w, notes)
 		case "markdown":
 			return exportMarkdown(ctx, w, notes)
 		default:
-			return fmt.Errorf("unknown format: %s (use 'markdown' or 'json')", format)
+			return fmt.Errorf("unknown format: %s (use 'markdown', 'json', or 'jsonl')", format)
 		}
 	},
+}
+
+func noteToExported(ctx context.Context, note db.Note) (exportedNote, error) {
+	tags, err := database.GetTagsForNote(ctx, note.ID)
+	if err != nil {
+		return exportedNote{}, err
+	}
+
+	tagNames := make([]string, len(tags))
+	for i, t := range tags {
+		tagNames[i] = t.Name
+	}
+
+	exported := exportedNote{
+		ID:        note.ID,
+		Title:     note.Title,
+		Content:   note.Content,
+		Tags:      tagNames,
+		CreatedAt: note.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt: note.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
+	}
+
+	if note.ExpiresAt.Valid {
+		exported.ExpiresAt = note.ExpiresAt.Time.Format("2006-01-02T15:04:05Z")
+	}
+	if note.Source.Valid {
+		exported.Source = note.Source.String
+	}
+	if note.SourceRef.Valid {
+		exported.SourceRef = note.SourceRef.String
+	}
+
+	return exported, nil
 }
 
 func exportJSON(ctx context.Context, w io.Writer, notes []db.Note) error {
 	exported := make([]exportedNote, 0, len(notes))
 
 	for _, note := range notes {
-		tags, err := database.GetTagsForNote(ctx, note.ID)
+		exp, err := noteToExported(ctx, note)
 		if err != nil {
 			return err
 		}
-
-		tagNames := make([]string, len(tags))
-		for i, t := range tags {
-			tagNames[i] = t.Name
-		}
-
-		exported = append(exported, exportedNote{
-			ID:        note.ID,
-			Title:     note.Title,
-			Content:   note.Content,
-			Tags:      tagNames,
-			CreatedAt: note.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
-			UpdatedAt: note.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
-		})
+		exported = append(exported, exp)
 	}
 
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(exported)
+}
+
+func exportJSONL(ctx context.Context, w io.Writer, notes []db.Note) error {
+	encoder := json.NewEncoder(w)
+	for _, note := range notes {
+		exp, err := noteToExported(ctx, note)
+		if err != nil {
+			return err
+		}
+		if err := encoder.Encode(exp); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func exportMarkdown(ctx context.Context, w io.Writer, notes []db.Note) error {
@@ -143,7 +205,8 @@ func exportMarkdown(ctx context.Context, w io.Writer, notes []db.Note) error {
 func init() {
 	rootCmd.AddCommand(exportCmd)
 
-	exportCmd.Flags().StringP("format", "f", "markdown", "Output format (markdown, json)")
+	exportCmd.Flags().StringP("format", "f", "markdown", "Output format (markdown, json, jsonl)")
 	exportCmd.Flags().StringP("output", "o", "", "Output path (default: stdout)")
 	exportCmd.Flags().StringP("tag", "T", "", "Filter by tag")
+	exportCmd.Flags().String("since", "", "Export notes created since date (YYYY-MM-DD)")
 }

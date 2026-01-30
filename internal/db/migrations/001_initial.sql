@@ -1,16 +1,16 @@
+-- Migration 001: Initial schema
+-- This establishes the baseline schema for existing databases
+
 PRAGMA foreign_keys = ON;
 
 -- Notes table
 CREATE TABLE IF NOT EXISTS notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
-  content TEXT NOT NULL, -- markdown content
+  content TEXT NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  embedding_synced BOOLEAN DEFAULT FALSE, -- track if veclite has indexed this
-  expires_at DATETIME, -- TTL support: when the note should expire
-  source TEXT, -- where the note originated (e.g., "code-review", "manual", "mcp")
-  source_ref TEXT -- reference to source location (e.g., "main.go:50")
+  embedding_synced BOOLEAN DEFAULT FALSE
 );
 
 -- Tags table (normalized)
@@ -32,5 +32,4 @@ CREATE TABLE IF NOT EXISTS note_tags (
 CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at);
 CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at);
 CREATE INDEX IF NOT EXISTS idx_notes_embedding_synced ON notes(embedding_synced);
-CREATE INDEX IF NOT EXISTS idx_notes_expires_at ON notes(expires_at) WHERE expires_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);

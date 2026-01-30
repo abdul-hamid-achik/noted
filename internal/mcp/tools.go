@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/abdul-hamid-achik/noted/internal/db"
+	"github.com/abdul-hamid-achik/noted/internal/memory"
+	"github.com/abdul-hamid-achik/noted/internal/veclite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -59,6 +61,9 @@ type rememberInput struct {
 	Title      string `json:"title,omitempty" jsonschema:"Short title for the memory"`
 	Category   string `json:"category,omitempty" jsonschema:"Category: user-pref, project, decision, fact, or todo"`
 	Importance int    `json:"importance,omitempty" jsonschema:"Importance level 1-5 (default 3)"`
+	TTL        string `json:"ttl,omitempty" jsonschema:"Time-to-live duration (e.g., '24h', '7d')"`
+	Source     string `json:"source,omitempty" jsonschema:"Source identifier (e.g., 'code-review', 'manual')"`
+	SourceRef  string `json:"source_ref,omitempty" jsonschema:"Source reference (e.g., 'main.go:50')"`
 }
 
 type recallInput struct {
@@ -547,68 +552,71 @@ func (s *Server) toolRemember(ctx context.Context, input rememberInput) (*mcp.Ca
 		return errorResult("content is required")
 	}
 
-	// Default importance to 3
-	importance := input.Importance
-	if importance < 1 || importance > 5 {
-		importance = 3
-	}
-
-	// Default category
-	category := input.Category
-	if category == "" {
-		category = "fact"
-	}
-
-	// Generate title if not provided
-	title := input.Title
-	if title == "" {
-		// Use first 50 chars of content as title
-		title = input.Content
-		if len(title) > 50 {
-			title = title[:50] + "..."
+	// Parse TTL if provided
+	var ttl time.Duration
+	if input.TTL != "" {
+		var err error
+		ttl, err = parseDuration(input.TTL)
+		if err != nil {
+			return errorResult(fmt.Sprintf("invalid TTL: %v", err))
 		}
 	}
 
-	// Create the note
-	note, err := s.queries.CreateNote(ctx, db.CreateNoteParams{
-		Title:   title,
-		Content: input.Content,
+	// Get veclite syncer (may be nil)
+	var syncer *veclite.Syncer
+	if s.syncer != nil {
+		if vs, ok := s.syncer.(*veclite.Syncer); ok {
+			syncer = vs
+		}
+	}
+
+	mem, err := memory.Remember(ctx, s.queries, syncer, memory.RememberInput{
+		Content:    input.Content,
+		Title:      input.Title,
+		Category:   input.Category,
+		Importance: input.Importance,
+		TTL:        ttl,
+		Source:     input.Source,
+		SourceRef:  input.SourceRef,
 	})
 	if err != nil {
 		return errorResult(fmt.Sprintf("failed to create memory: %v", err))
 	}
 
-	// Add memory tags
-	memoryTags := []string{
-		"memory",
-		"memory:" + category,
-		fmt.Sprintf("importance:%d", importance),
-	}
-
-	for _, tagName := range memoryTags {
-		tag, err := s.queries.CreateTag(ctx, tagName)
-		if err != nil {
-			continue
-		}
-		_ = s.queries.AddTagToNote(ctx, db.AddTagToNoteParams{
-			NoteID: note.ID,
-			TagID:  tag.ID,
-		})
-	}
-
-	// Sync to veclite if available
-	if s.syncer != nil {
-		_ = s.syncer.SyncNote(note.ID, note.Title, note.Content)
-	}
-
-	return textResult(map[string]any{
-		"id":         note.ID,
-		"title":      title,
-		"category":   category,
-		"importance": importance,
+	result := map[string]any{
+		"id":         mem.ID,
+		"title":      mem.Title,
+		"category":   mem.Category,
+		"importance": mem.Importance,
 		"status":     "remembered",
-		"message":    fmt.Sprintf("Memory stored with ID #%d", note.ID),
-	})
+		"message":    fmt.Sprintf("Memory stored with ID #%d", mem.ID),
+	}
+
+	if !mem.ExpiresAt.IsZero() {
+		result["expires_at"] = mem.ExpiresAt.Format(time.RFC3339)
+	}
+	if mem.Source != "" {
+		result["source"] = mem.Source
+	}
+	if mem.SourceRef != "" {
+		result["source_ref"] = mem.SourceRef
+	}
+
+	return textResult(result)
+}
+
+// parseDuration parses a duration string with support for days (e.g., "7d", "24h")
+func parseDuration(s string) (time.Duration, error) {
+	// Check for day suffix
+	if len(s) > 0 && s[len(s)-1] == 'd' {
+		days := s[:len(s)-1]
+		var n int
+		if _, err := fmt.Sscanf(days, "%d", &n); err != nil {
+			return 0, fmt.Errorf("invalid day format: %s", s)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
 }
 
 func (s *Server) toolRecall(ctx context.Context, input recallInput) (*mcp.CallToolResult, any, error) {
@@ -616,236 +624,105 @@ func (s *Server) toolRecall(ctx context.Context, input recallInput) (*mcp.CallTo
 		return errorResult("query is required")
 	}
 
-	limit := input.Limit
-	if limit <= 0 {
-		limit = 5
-	}
-
-	// Try semantic search first if available
+	// Get veclite syncer (may be nil)
+	var syncer *veclite.Syncer
 	if s.syncer != nil {
-		results, err := s.syncer.Search(input.Query, limit*2) // Get extra for filtering
-		if err == nil && len(results) > 0 {
-			// Filter to only memory notes and enrich with full data
-			output := make([]map[string]any, 0, limit)
-			for _, r := range results {
-				if len(output) >= limit {
-					break
-				}
-
-				note, err := s.queries.GetNote(ctx, r.NoteID)
-				if err != nil {
-					continue
-				}
-
-				// Get tags and check if it's a memory
-				tags, err := s.queries.GetTagsForNote(ctx, note.ID)
-				if err != nil {
-					continue
-				}
-
-				isMemory := false
-				var category string
-				var importanceVal int
-				tagNames := make([]string, len(tags))
-				for i, t := range tags {
-					tagNames[i] = t.Name
-					if t.Name == "memory" {
-						isMemory = true
-					}
-					if len(t.Name) > 7 && t.Name[:7] == "memory:" {
-						category = t.Name[7:]
-					}
-					if len(t.Name) > 11 && t.Name[:11] == "importance:" {
-						_, _ = fmt.Sscanf(t.Name[11:], "%d", &importanceVal)
-					}
-				}
-
-				// Skip if category filter doesn't match
-				if input.Category != "" && category != input.Category {
-					continue
-				}
-
-				// Only include memories, but if no memories found, include all
-				if isMemory {
-					output = append(output, map[string]any{
-						"id":         note.ID,
-						"title":      note.Title,
-						"content":    note.Content,
-						"category":   category,
-						"importance": importanceVal,
-						"score":      r.Score,
-						"tags":       tagNames,
-					})
-				}
-			}
-
-			if len(output) > 0 {
-				return textResult(map[string]any{
-					"query":    input.Query,
-					"method":   "semantic",
-					"count":    len(output),
-					"memories": output,
-				})
-			}
+		if vs, ok := s.syncer.(*veclite.Syncer); ok {
+			syncer = vs
 		}
 	}
 
-	// Fallback to keyword search
-	pattern := "%" + input.Query + "%"
-	notes, err := s.queries.SearchNotesContent(ctx, db.SearchNotesContentParams{
-		Content: pattern,
-		Title:   pattern,
-		Limit:   int64(limit * 2),
+	result, err := memory.Recall(ctx, s.queries, syncer, memory.RecallInput{
+		Query:       input.Query,
+		Limit:       input.Limit,
+		Category:    input.Category,
+		UseSemantic: syncer != nil, // Use semantic search if available
 	})
 	if err != nil {
-		return errorResult(fmt.Sprintf("search failed: %v", err))
+		return errorResult(fmt.Sprintf("recall failed: %v", err))
 	}
 
-	// Filter to memories only
-	output := make([]map[string]any, 0, limit)
-	for _, note := range notes {
-		if len(output) >= limit {
-			break
+	// Convert memories to output format
+	output := make([]map[string]any, len(result.Memories))
+	for i, mem := range result.Memories {
+		m := map[string]any{
+			"id":         mem.ID,
+			"title":      mem.Title,
+			"content":    mem.Content,
+			"category":   mem.Category,
+			"importance": mem.Importance,
+			"tags":       mem.Tags,
 		}
-
-		tags, err := s.queries.GetTagsForNote(ctx, note.ID)
-		if err != nil {
-			continue
+		if mem.Score > 0 {
+			m["score"] = mem.Score
 		}
-
-		isMemory := false
-		var category string
-		var importanceVal int
-		tagNames := make([]string, len(tags))
-		for i, t := range tags {
-			tagNames[i] = t.Name
-			if t.Name == "memory" {
-				isMemory = true
-			}
-			if len(t.Name) > 7 && t.Name[:7] == "memory:" {
-				category = t.Name[7:]
-			}
-			if len(t.Name) > 11 && t.Name[:11] == "importance:" {
-				_, _ = fmt.Sscanf(t.Name[11:], "%d", &importanceVal)
-			}
+		if !mem.ExpiresAt.IsZero() {
+			m["expires_at"] = mem.ExpiresAt.Format(time.RFC3339)
 		}
-
-		if !isMemory {
-			continue
+		if mem.Source != "" {
+			m["source"] = mem.Source
 		}
-
-		// Skip if category filter doesn't match
-		if input.Category != "" && category != input.Category {
-			continue
+		if mem.SourceRef != "" {
+			m["source_ref"] = mem.SourceRef
 		}
-
-		output = append(output, map[string]any{
-			"id":         note.ID,
-			"title":      note.Title,
-			"content":    note.Content,
-			"category":   category,
-			"importance": importanceVal,
-			"tags":       tagNames,
-		})
+		output[i] = m
 	}
 
 	return textResult(map[string]any{
-		"query":    input.Query,
-		"method":   "keyword",
-		"count":    len(output),
+		"query":    result.Query,
+		"method":   result.Method,
+		"count":    result.Count,
 		"memories": output,
 	})
 }
 
 func (s *Server) toolForget(ctx context.Context, input forgetInput) (*mcp.CallToolResult, any, error) {
-	// Default to dry run for safety
-	dryRun := input.DryRun
-	if !input.DryRun && input.OlderThanDays == 0 && input.ImportanceBelow == 0 && input.Category == "" {
-		dryRun = true // Force dry run if no criteria specified
+	// Get veclite syncer (may be nil)
+	var syncer *veclite.Syncer
+	if s.syncer != nil {
+		if vs, ok := s.syncer.(*veclite.Syncer); ok {
+			syncer = vs
+		}
 	}
 
-	// Find memories matching criteria
-	memories, err := s.queries.GetNotesByTagName(ctx, "memory")
+	result, err := memory.Forget(ctx, s.queries, syncer, memory.ForgetInput{
+		OlderThanDays:   input.OlderThanDays,
+		ImportanceBelow: input.ImportanceBelow,
+		Category:        input.Category,
+		DryRun:          input.DryRun,
+	})
 	if err != nil {
-		return errorResult(fmt.Sprintf("failed to find memories: %v", err))
+		return errorResult(fmt.Sprintf("forget failed: %v", err))
 	}
 
-	toDelete := make([]map[string]any, 0)
-	now := time.Now()
-
-	for _, note := range memories {
-		// Check age criteria
-		if input.OlderThanDays > 0 && note.CreatedAt.Valid {
-			age := now.Sub(note.CreatedAt.Time)
-			if age.Hours()/24 < float64(input.OlderThanDays) {
-				continue // Too recent
-			}
+	// Convert memories to output format
+	output := make([]map[string]any, len(result.Memories))
+	for i, mem := range result.Memories {
+		output[i] = map[string]any{
+			"id":         mem.ID,
+			"title":      mem.Title,
+			"category":   mem.Category,
+			"importance": mem.Importance,
 		}
-
-		// Get tags to check importance and category
-		tags, err := s.queries.GetTagsForNote(ctx, note.ID)
-		if err != nil {
-			continue
-		}
-
-		var category string
-		var importanceVal int
-		for _, t := range tags {
-			if len(t.Name) > 7 && t.Name[:7] == "memory:" {
-				category = t.Name[7:]
-			}
-			if len(t.Name) > 11 && t.Name[:11] == "importance:" {
-				_, _ = fmt.Sscanf(t.Name[11:], "%d", &importanceVal)
-			}
-		}
-
-		// Check category filter
-		if input.Category != "" && category != input.Category {
-			continue
-		}
-
-		// Check importance criteria
-		if input.ImportanceBelow > 0 && importanceVal >= input.ImportanceBelow {
-			continue // Too important
-		}
-
-		toDelete = append(toDelete, map[string]any{
-			"id":         note.ID,
-			"title":      note.Title,
-			"category":   category,
-			"importance": importanceVal,
-		})
 	}
 
-	if dryRun {
+	if result.DryRun {
 		return textResult(map[string]any{
-			"dry_run":     true,
-			"would_delete": len(toDelete),
-			"memories":    toDelete,
+			"dry_run":      true,
+			"would_delete": result.WouldDelete,
+			"memories":     output,
 			"criteria": map[string]any{
-				"older_than_days":   input.OlderThanDays,
-				"importance_below":  input.ImportanceBelow,
-				"category":          input.Category,
+				"older_than_days":  input.OlderThanDays,
+				"importance_below": input.ImportanceBelow,
+				"category":         input.Category,
 			},
 		})
 	}
 
-	// Actually delete
-	deleted := 0
-	for _, mem := range toDelete {
-		id := mem["id"].(int64)
-		if s.syncer != nil {
-			_ = s.syncer.Delete(id)
-		}
-		if err := s.queries.DeleteNote(ctx, id); err == nil {
-			deleted++
-		}
-	}
-
 	return textResult(map[string]any{
-		"deleted":  deleted,
+		"deleted":  result.Deleted,
 		"status":   "forgotten",
-		"memories": toDelete,
+		"memories": output,
 	})
 }
 

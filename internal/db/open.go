@@ -2,15 +2,12 @@ package db
 
 import (
 	"database/sql"
-	_ "embed"
-	"path/filepath"
+	"fmt"
 	"os"
+	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
-
-//go:embed schema.sql
-var schema string
 
 func Open(path string) (*sql.DB, error) {
 	dir := filepath.Dir(path)
@@ -23,9 +20,16 @@ func Open(path string) (*sql.DB, error) {
 		return nil, err
 	}
 
-	if _, err := db.Exec(schema); err != nil {
+	// Enable foreign keys (must be done on every connection)
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
-		return nil, err
+		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+
+	// Run migrations to create/update schema
+	if err := RunMigrations(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
 	return db, nil

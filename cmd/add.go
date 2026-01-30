@@ -5,26 +5,39 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/abdul-hamid-achik/noted/internal/db"
 	"github.com/spf13/cobra"
 )
 
 type addResult struct {
-	ID    int64  `json:"id"`
-	Title string `json:"title"`
+	ID        int64  `json:"id"`
+	Title     string `json:"title"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+	Source    string `json:"source,omitempty"`
+	SourceRef string `json:"source_ref,omitempty"`
 }
 
 var addCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a new note",
-	Long:  "",
+	Long: `Add a new note with optional tags, TTL, and source tracking.
+
+Examples:
+  noted add -t "Meeting notes" -c "Discussed project timeline"
+  noted add -t "Todo" --ttl 7d -c "Review PR by Friday"
+  noted add -t "Bug" --source code-review --source-ref main.go:50`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		title, _ := cmd.Flags().GetString("title")
 		tags, _ := cmd.Flags().GetString("tags")
 		content, _ := cmd.Flags().GetString("content")
+		ttlStr, _ := cmd.Flags().GetString("ttl")
+		source, _ := cmd.Flags().GetString("source")
+		sourceRef, _ := cmd.Flags().GetString("source-ref")
 		asJSON, _ := cmd.Flags().GetBool("json")
 
 		if content == "" {
@@ -35,10 +48,35 @@ var addCmd = &cobra.Command{
 			}
 		}
 
+		// Parse TTL if provided
+		var expiresAt sql.NullTime
+		if ttlStr != "" {
+			dur, err := parseDuration(ttlStr)
+			if err != nil {
+				return fmt.Errorf("invalid TTL: %w", err)
+			}
+			expiresAt = sql.NullTime{
+				Time:  time.Now().Add(dur),
+				Valid: true,
+			}
+		}
+
+		// Create source values
+		var sourceVal, sourceRefVal sql.NullString
+		if source != "" {
+			sourceVal = sql.NullString{String: source, Valid: true}
+		}
+		if sourceRef != "" {
+			sourceRefVal = sql.NullString{String: sourceRef, Valid: true}
+		}
+
 		ctx := context.Background()
-		note, err := database.CreateNote(ctx, db.CreateNoteParams{
-			Title:   title,
-			Content: content,
+		note, err := database.CreateNoteWithTTL(ctx, db.CreateNoteWithTTLParams{
+			Title:     title,
+			Content:   content,
+			ExpiresAt: expiresAt,
+			Source:    sourceVal,
+			SourceRef: sourceRefVal,
 		})
 
 		if err != nil {
@@ -70,13 +108,32 @@ var addCmd = &cobra.Command{
 		}
 
 		if asJSON {
-			return outputJSON(addResult{
+			result := addResult{
 				ID:    note.ID,
 				Title: note.Title,
-			})
+			}
+			if expiresAt.Valid {
+				result.ExpiresAt = expiresAt.Time.Format(time.RFC3339)
+			}
+			if sourceVal.Valid {
+				result.Source = sourceVal.String
+			}
+			if sourceRefVal.Valid {
+				result.SourceRef = sourceRefVal.String
+			}
+			return outputJSON(result)
 		}
 
 		fmt.Printf("Created note #%d: %s\n", note.ID, note.Title)
+		if expiresAt.Valid {
+			fmt.Printf("  Expires: %s\n", expiresAt.Time.Format("2006-01-02 15:04"))
+		}
+		if sourceVal.Valid {
+			fmt.Printf("  Source: %s\n", sourceVal.String)
+			if sourceRefVal.Valid {
+				fmt.Printf("  Reference: %s\n", sourceRefVal.String)
+			}
+		}
 		return nil
 	},
 }
@@ -87,6 +144,9 @@ func init() {
 	addCmd.Flags().StringP("title", "t", "", "Note title (required)")
 	addCmd.Flags().StringP("tags", "T", "", "Comma-separated tags")
 	addCmd.Flags().StringP("content", "c", "", "Note content")
+	addCmd.Flags().String("ttl", "", "Time-to-live duration (e.g., '24h', '7d')")
+	addCmd.Flags().String("source", "", "Source identifier (e.g., 'code-review', 'manual')")
+	addCmd.Flags().String("source-ref", "", "Source reference (e.g., 'main.go:50')")
 	addCmd.Flags().BoolP("json", "j", false, "Output as JSON")
 
 	_ = addCmd.MarkFlagRequired("title")

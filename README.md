@@ -7,7 +7,10 @@ A fast, lightweight CLI knowledge base for capturing and organizing notes from y
 - **Quick capture** - Create notes with titles, content, and tags in one command
 - **Rich tagging** - Organize notes with multiple tags, view tag statistics
 - **Full-text search** - Find notes by searching titles and content
-- **Import/Export** - Markdown files with YAML frontmatter, JSON export
+- **Agent memory system** - Remember, recall, and forget memories with categories and importance levels
+- **TTL support** - Set time-to-live for auto-expiring notes and memories
+- **Source tracking** - Track where notes originated (code reviews, meetings, etc.)
+- **Import/Export** - Markdown, JSON, and JSONL formats with YAML frontmatter
 - **Editor integration** - Uses your `$EDITOR` for composing longer notes
 - **MCP Server** - Expose notes to AI agents like Claude via Model Context Protocol
 - **Semantic search** - Optional vector similarity search powered by veclite
@@ -86,6 +89,9 @@ noted add -t "Go Tips" -c "Use gofmt" -T "golang,programming,tips"
 | `--title` | `-t` | Note title (required) |
 | `--content` | `-c` | Note content (opens editor if omitted) |
 | `--tags` | `-T` | Comma-separated tags |
+| `--ttl` | | Time-to-live (e.g., `24h`, `7d`) |
+| `--source` | | Source identifier (e.g., `code-review`) |
+| `--source-ref` | | Source reference (e.g., `main.go:50`) |
 
 ### Listing Notes
 
@@ -233,6 +239,91 @@ noted grep "meeting" -n 5
 |------|-------|-------------|
 | `--limit` | `-n` | Maximum results (default: 20) |
 
+### Memory System
+
+The memory system provides a way to store, recall, and manage memories with categories and importance levels. This is especially useful for AI agents that need persistent context.
+
+#### Storing Memories
+
+```bash
+# Store a simple memory
+noted remember "Always use snake_case for database columns"
+
+# Store with category and importance
+noted remember "Project uses PostgreSQL 15" --category project --importance 4
+
+# Store with TTL (auto-expires)
+noted remember "Review PR #123 by Friday" --ttl 3d --category todo
+
+# Store with source tracking
+noted remember "Found auth bug" --source code-review --source-ref auth.go:142
+```
+
+**Flags:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--title` | `-t` | Short title for the memory |
+| `--category` | `-c` | Category: `user-pref`, `project`, `decision`, `fact`, `todo` (default: `fact`) |
+| `--importance` | `-i` | Importance level 1-5 (default: 3) |
+| `--ttl` | | Time-to-live duration (e.g., `24h`, `7d`) |
+| `--source` | | Source identifier |
+| `--source-ref` | | Source reference |
+
+#### Recalling Memories
+
+```bash
+# Search memories
+noted recall "database conventions"
+
+# Limit results
+noted recall "authentication" --limit 10
+
+# Filter by category
+noted recall "setup" --category project
+
+# Use semantic search (if available)
+noted recall "user preferences" --semantic
+```
+
+**Flags:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--limit` | `-n` | Maximum results (default: 5) |
+| `--category` | `-c` | Filter by category |
+| `--semantic` | `-s` | Use semantic search (default: true if available) |
+
+#### Forgetting Memories
+
+```bash
+# Preview what would be deleted (dry run)
+noted forget --older-than 30d
+
+# Actually delete old memories
+noted forget --older-than 30d --force
+
+# Delete low-importance memories
+noted forget --importance-below 2 --force
+
+# Delete by category
+noted forget --category todo --older-than 7d --force
+
+# Delete specific memory by ID
+noted forget --id 42 --force
+
+# Delete memories matching a query
+noted forget --query "temporary" --force
+```
+
+**Flags:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--older-than` | | Delete memories older than duration (e.g., `30d`) |
+| `--importance-below` | | Delete memories below this importance level |
+| `--category` | `-c` | Only delete memories in this category |
+| `--query` | `-q` | Delete memories matching this text |
+| `--id` | | Delete specific memory by ID |
+| `--force` | `-f` | Actually delete (default is dry-run preview) |
+
 ### Exporting Notes
 
 Export notes to files:
@@ -244,19 +335,26 @@ noted export
 # Export as JSON
 noted export -f json
 
+# Export as JSON Lines (one object per line)
+noted export -f jsonl
+
 # Export to file
 noted export -o backup.md
 
 # Export notes with specific tag
 noted export --tag work -f json -o work-notes.json
+
+# Export notes since a date
+noted export --since 2026-01-01 -f jsonl
 ```
 
 **Flags:**
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--format` | `-f` | Output format: `markdown`, `json` (default: markdown) |
+| `--format` | `-f` | Output format: `markdown`, `json`, `jsonl` (default: markdown) |
 | `--output` | `-o` | Output file path (default: stdout) |
 | `--tag` | `-T` | Filter by tag |
+| `--since` | | Export notes created since date (YYYY-MM-DD) |
 
 **Markdown format:**
 ```markdown
@@ -282,6 +380,12 @@ Discussed Q1 roadmap with the team.
     "updated_at": "2026-01-29T14:30:00Z"
   }
 ]
+```
+
+**JSONL format (one object per line):**
+```json
+{"id":1,"title":"Meeting Notes","content":"Discussed Q1 roadmap.","tags":["work"],"created_at":"2026-01-29T14:30:00Z","updated_at":"2026-01-29T14:30:00Z"}
+{"id":2,"title":"Todo","content":"Buy groceries","tags":["personal"],"created_at":"2026-01-29T15:00:00Z","updated_at":"2026-01-29T15:00:00Z"}
 ```
 
 ### Importing Notes
@@ -386,9 +490,9 @@ Or manually edit `~/.claude/settings.json`:
 | `noted_delete` | Delete a note by ID |
 | `noted_tags` | List all tags with their note counts |
 | `noted_semantic_search` | Search notes using vector similarity (requires veclite) |
-| `noted_remember` | Store a memory with category and importance for agent recall |
-| `noted_recall` | Recall relevant memories by query |
-| `noted_forget` | Delete old or low-importance memories |
+| `noted_remember` | Store a memory with category, importance, TTL, and source tracking |
+| `noted_recall` | Recall relevant memories by query with semantic or keyword search |
+| `noted_forget` | Delete old or low-importance memories with dry-run support |
 | `noted_sync` | Sync notes to the semantic search index |
 
 ### Memory Tools for Agents
@@ -399,10 +503,13 @@ The `noted_remember`, `noted_recall`, and `noted_forget` tools provide persisten
 # Example: Agent stores a user preference
 noted_remember(content="User prefers dark mode", category="user-pref", importance=4)
 
-# Example: Agent recalls relevant memories
-noted_recall(query="user preferences", limit=5)
+# Example: Store with TTL and source
+noted_remember(content="Bug in auth flow", category="project", ttl="7d", source="code-review", source_ref="auth.go:50")
 
-# Example: Clean up old memories
+# Example: Agent recalls relevant memories
+noted_recall(query="user preferences", limit=5, category="user-pref")
+
+# Example: Clean up old memories (preview first)
 noted_forget(older_than_days=30, importance_below=2, dry_run=true)
 ```
 
@@ -412,6 +519,12 @@ noted_forget(older_than_days=30, importance_below=2, dry_run=true)
 - `decision` - Design decisions and rationale
 - `fact` - General facts and knowledge
 - `todo` - Tasks and reminders
+
+**Memory features:**
+- **TTL (Time-to-Live)**: Set `ttl` parameter (e.g., `"24h"`, `"7d"`) for auto-expiring memories
+- **Source tracking**: Track origin with `source` and `source_ref` parameters
+- **Importance levels**: 1-5 scale for prioritizing memory retention
+- **Lazy cleanup**: Expired memories are automatically removed during recall operations
 
 ## Semantic Search
 
@@ -491,7 +604,10 @@ noted/
 │   ├── delete.go          # Remove notes
 │   ├── tags.go            # Tag management
 │   ├── grep.go            # Search notes
-│   ├── export.go          # Export to markdown/JSON
+│   ├── remember.go        # Store memories
+│   ├── recall.go          # Search memories
+│   ├── forget.go          # Delete memories
+│   ├── export.go          # Export to markdown/JSON/JSONL
 │   ├── import.go          # Import markdown files
 │   ├── mcp.go             # MCP server command
 │   ├── sync.go            # Sync to veclite
@@ -502,7 +618,14 @@ noted/
 │   ├── db/                # Database layer (sqlc)
 │   │   ├── schema.sql     # Database schema
 │   │   ├── query.sql      # SQL queries
+│   │   ├── migrate.go     # Database migration system
+│   │   ├── migrations/    # SQL migration files
 │   │   └── *.go           # Generated code
+│   ├── memory/            # Shared memory logic
+│   │   ├── types.go       # Memory types and validation
+│   │   ├── remember.go    # Create memories
+│   │   ├── recall.go      # Search memories
+│   │   └── forget.go      # Delete memories
 │   ├── mcp/               # MCP server implementation
 │   │   ├── server.go      # Server setup and transport
 │   │   └── tools.go       # Tool handlers

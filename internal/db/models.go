@@ -9,12 +9,15 @@ import (
 )
 
 type Note struct {
-	ID              int64        `json:"id"`
-	Title           string       `json:"title"`
-	Content         string       `json:"content"`
-	CreatedAt       sql.NullTime `json:"created_at"`
-	UpdatedAt       sql.NullTime `json:"updated_at"`
-	EmbeddingSynced sql.NullBool `json:"embedding_synced"`
+	ID              int64          `json:"id"`
+	Title           string         `json:"title"`
+	Content         string         `json:"content"`
+	CreatedAt       sql.NullTime   `json:"created_at"`
+	UpdatedAt       sql.NullTime   `json:"updated_at"`
+	EmbeddingSynced sql.NullBool   `json:"embedding_synced"`
+	ExpiresAt       sql.NullTime   `json:"expires_at"`
+	Source          sql.NullString `json:"source"`
+	SourceRef       sql.NullString `json:"source_ref"`
 }
 
 type NoteTag struct {
