@@ -1,6 +1,6 @@
 # noted
 
-A fast, lightweight CLI knowledge base for capturing and organizing notes from your terminal.
+A fast, lightweight CLI knowledge base for capturing and organizing notes from your terminal. Includes an MCP server for AI agent integration.
 
 ## Features
 
@@ -9,6 +9,8 @@ A fast, lightweight CLI knowledge base for capturing and organizing notes from y
 - **Full-text search** - Find notes by searching titles and content
 - **Import/Export** - Markdown files with YAML frontmatter, JSON export
 - **Editor integration** - Uses your `$EDITOR` for composing longer notes
+- **MCP Server** - Expose notes to AI agents like Claude via Model Context Protocol
+- **Semantic search** - Optional vector similarity search powered by veclite
 - **Portable** - Single binary, SQLite database, XDG-compliant storage
 
 ## Quick Start
@@ -332,6 +334,132 @@ noted version
 noted version --json
 ```
 
+## MCP Server
+
+noted includes an MCP (Model Context Protocol) server that exposes your knowledge base to AI agents like Claude.
+
+### Starting the Server
+
+```bash
+# Start MCP server (uses stdio transport)
+noted mcp
+```
+
+### Integration with Claude Code
+
+Add noted to your Claude Code configuration:
+
+```bash
+# Add MCP server
+claude mcp add noted -- noted mcp
+
+# With semantic search enabled
+claude mcp add noted -- env NOTED_VECLITE_PATH=~/.local/share/noted/vectors.veclite noted mcp
+```
+
+Or manually edit `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "noted": {
+      "command": "noted",
+      "args": ["mcp"],
+      "env": {
+        "NOTED_VECLITE_PATH": "~/.local/share/noted/vectors.veclite",
+        "NOTED_EMBEDDING_MODEL": "nomic-embed-text"
+      }
+    }
+  }
+}
+```
+
+### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `noted_create` | Create a new note with title, content, and optional tags |
+| `noted_list` | List notes with optional tag filter and pagination |
+| `noted_get` | Get a note by its ID, including tags |
+| `noted_search` | Search notes by title and content using text matching |
+| `noted_update` | Update a note's title, content, or tags |
+| `noted_delete` | Delete a note by ID |
+| `noted_tags` | List all tags with their note counts |
+| `noted_semantic_search` | Search notes using vector similarity (requires veclite) |
+| `noted_remember` | Store a memory with category and importance for agent recall |
+| `noted_recall` | Recall relevant memories by query |
+| `noted_forget` | Delete old or low-importance memories |
+| `noted_sync` | Sync notes to the semantic search index |
+
+### Memory Tools for Agents
+
+The `noted_remember`, `noted_recall`, and `noted_forget` tools provide persistent memory for AI agents:
+
+```
+# Example: Agent stores a user preference
+noted_remember(content="User prefers dark mode", category="user-pref", importance=4)
+
+# Example: Agent recalls relevant memories
+noted_recall(query="user preferences", limit=5)
+
+# Example: Clean up old memories
+noted_forget(older_than_days=30, importance_below=2, dry_run=true)
+```
+
+**Memory categories:**
+- `user-pref` - User preferences and settings
+- `project` - Project-specific information
+- `decision` - Design decisions and rationale
+- `fact` - General facts and knowledge
+- `todo` - Tasks and reminders
+
+## Semantic Search
+
+Enable semantic search to find notes by meaning, not just keywords.
+
+### Prerequisites
+
+1. [Ollama](https://ollama.ai) running locally
+2. An embedding model (default: `nomic-embed-text`)
+
+```bash
+# Install Ollama and pull the embedding model
+ollama pull nomic-embed-text
+```
+
+### Configuration
+
+Set the veclite database path:
+
+```bash
+export NOTED_VECLITE_PATH=~/.local/share/noted/vectors.veclite
+```
+
+### Syncing Notes
+
+Sync your existing notes to enable semantic search:
+
+```bash
+# Sync unsynced notes
+noted sync
+
+# Force re-sync all notes
+noted sync --force
+```
+
+**Flags:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--force` | `-f` | Re-sync all notes even if already synced |
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `NOTED_VECLITE_PATH` | Path to veclite database | (disabled) |
+| `NOTED_EMBEDDING_MODEL` | Ollama embedding model | `nomic-embed-text` |
+| `OLLAMA_HOST` | Ollama server URL | `http://localhost:11434` |
+
 ## Configuration
 
 noted follows the XDG Base Directory Specification:
@@ -339,12 +467,16 @@ noted follows the XDG Base Directory Specification:
 | Path | Description |
 |------|-------------|
 | `~/.local/share/noted/noted.db` | SQLite database |
+| `~/.local/share/noted/vectors.veclite` | Vector database (optional) |
 
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
 | `EDITOR` | Editor for composing notes (default: `nvim`) |
+| `NOTED_VECLITE_PATH` | Path to veclite database for semantic search |
+| `NOTED_EMBEDDING_MODEL` | Embedding model for semantic search |
+| `OLLAMA_HOST` | Ollama server URL |
 
 ## Architecture
 
@@ -361,14 +493,21 @@ noted/
 │   ├── grep.go            # Search notes
 │   ├── export.go          # Export to markdown/JSON
 │   ├── import.go          # Import markdown files
+│   ├── mcp.go             # MCP server command
+│   ├── sync.go            # Sync to veclite
 │   ├── version.go         # Version info
 │   └── editor.go          # Editor integration
 ├── internal/
 │   ├── config/            # XDG-compliant configuration
-│   └── db/                # Database layer (sqlc)
-│       ├── schema.sql     # Database schema
-│       ├── query.sql      # SQL queries
-│       └── *.go           # Generated code
+│   ├── db/                # Database layer (sqlc)
+│   │   ├── schema.sql     # Database schema
+│   │   ├── query.sql      # SQL queries
+│   │   └── *.go           # Generated code
+│   ├── mcp/               # MCP server implementation
+│   │   ├── server.go      # Server setup and transport
+│   │   └── tools.go       # Tool handlers
+│   └── veclite/           # Semantic search integration
+│       └── syncer.go      # veclite sync and search
 ├── main.go                # Entry point
 ├── Taskfile.yml           # Build tasks
 └── sqlc.yaml              # sqlc configuration
@@ -379,6 +518,8 @@ noted/
 - **CLI Framework**: [Cobra](https://github.com/spf13/cobra)
 - **Database**: SQLite via [modernc.org/sqlite](https://modernc.org/sqlite) (pure Go)
 - **SQL Code Gen**: [sqlc](https://sqlc.dev)
+- **MCP SDK**: [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk)
+- **Vector Search**: [veclite](https://github.com/abdul-hamid-achik/veclite)
 - **Build Tool**: [Task](https://taskfile.dev)
 
 ## Development
@@ -429,6 +570,9 @@ go test -v ./...
 
 # Run specific test
 go test -v ./cmd -run TestDatabaseTags
+
+# Run MCP tests
+go test -v ./internal/mcp/...
 ```
 
 ## Contributing
@@ -460,3 +604,5 @@ Built with:
 - [Cobra](https://github.com/spf13/cobra) - CLI framework
 - [sqlc](https://sqlc.dev) - Type-safe SQL
 - [modernc.org/sqlite](https://modernc.org/sqlite) - Pure Go SQLite
+- [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) - Model Context Protocol
+- [veclite](https://github.com/abdul-hamid-achik/veclite) - Vector database
