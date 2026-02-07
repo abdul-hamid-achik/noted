@@ -1,5 +1,14 @@
 PRAGMA foreign_keys = ON;
 
+-- Folders table (hierarchical)
+CREATE TABLE IF NOT EXISTS folders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  parent_id INTEGER REFERENCES folders(id) ON DELETE CASCADE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Notes table
 CREATE TABLE IF NOT EXISTS notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -10,7 +19,8 @@ CREATE TABLE IF NOT EXISTS notes (
   embedding_synced BOOLEAN DEFAULT FALSE, -- track if veclite has indexed this
   expires_at DATETIME, -- TTL support: when the note should expire
   source TEXT, -- where the note originated (e.g., "code-review", "manual", "mcp")
-  source_ref TEXT -- reference to source location (e.g., "main.go:50")
+  source_ref TEXT, -- reference to source location (e.g., "main.go:50")
+  folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL
 );
 
 -- Tags table (normalized)
@@ -33,4 +43,6 @@ CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at);
 CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at);
 CREATE INDEX IF NOT EXISTS idx_notes_embedding_synced ON notes(embedding_synced);
 CREATE INDEX IF NOT EXISTS idx_notes_expires_at ON notes(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_notes_folder_id ON notes(folder_id);
 CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
+CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id);

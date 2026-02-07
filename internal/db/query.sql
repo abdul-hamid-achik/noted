@@ -125,3 +125,43 @@ UPDATE notes SET source = ?, source_ref = ? WHERE id = ?;
 
 -- name: GetNotesSince :many
 SELECT * FROM notes WHERE created_at >= ? ORDER BY created_at DESC;
+
+-- Folders --
+
+-- name: CreateFolder :one
+INSERT INTO folders (name, parent_id)
+VALUES (?, ?)
+RETURNING *;
+
+-- name: GetFolder :one
+SELECT * FROM folders WHERE id = ?;
+
+-- name: ListFolders :many
+SELECT * FROM folders ORDER BY name;
+
+-- name: UpdateFolder :one
+UPDATE folders
+SET name = ?, parent_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING *;
+
+-- name: DeleteFolder :exec
+DELETE FROM folders WHERE id = ?;
+
+-- name: GetNotesByFolder :many
+SELECT * FROM notes
+WHERE folder_id = ?
+ORDER BY created_at DESC;
+
+-- name: GetNotesWithoutFolder :many
+SELECT * FROM notes
+WHERE folder_id IS NULL
+ORDER BY created_at DESC;
+
+-- name: MoveNoteToFolder :exec
+UPDATE notes
+SET folder_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?;
+
+-- name: GetTag :one
+SELECT * FROM tags WHERE id = ?;

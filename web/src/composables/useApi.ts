@@ -1,4 +1,4 @@
-import type { Note, NoteCreateRequest, NoteUpdateRequest, Tag, Memory, MemoryCreateRequest, Stats } from '../types'
+import type { Note, NoteCreateRequest, NoteUpdateRequest, Tag, Memory, MemoryCreateRequest, Stats, SettingsInfo, ActionResult, Folder, FolderCreateRequest, FolderUpdateRequest } from '../types'
 
 const BASE = '/api'
 
@@ -83,9 +83,74 @@ export function useApi() {
     return request<Tag[]>('/tags')
   }
 
+  async function deleteTag(id: number): Promise<void> {
+    return request<void>(`/tags/${id}`, {
+      method: 'DELETE',
+    })
+  }
+
+  async function removeTagFromNote(tagId: number, noteId: number): Promise<void> {
+    return request<void>(`/tags/${tagId}/notes/${noteId}`, {
+      method: 'DELETE',
+    })
+  }
+
+  // Folders
+  async function getFolders(): Promise<Folder[]> {
+    return request<Folder[]>('/folders')
+  }
+
+  async function createFolder(data: FolderCreateRequest): Promise<Folder> {
+    return request<Folder>('/folders', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
+  async function updateFolder(id: number, data: FolderUpdateRequest): Promise<Folder> {
+    return request<Folder>(`/folders/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  }
+
+  async function deleteFolder(id: number): Promise<void> {
+    return request<void>(`/folders/${id}`, {
+      method: 'DELETE',
+    })
+  }
+
+  async function moveNoteToFolder(noteId: number, folderId: number | null): Promise<Note> {
+    return request<Note>(`/notes/${noteId}/move`, {
+      method: 'PUT',
+      body: JSON.stringify({ folder_id: folderId }),
+    })
+  }
+
   // Stats
   async function getStats(): Promise<Stats> {
     return request<Stats>('/stats')
+  }
+
+  // Settings
+  async function getSettings(): Promise<SettingsInfo> {
+    return request<SettingsInfo>('/settings')
+  }
+
+  async function vacuumDB(): Promise<ActionResult> {
+    return request<ActionResult>('/settings/vacuum', { method: 'POST' })
+  }
+
+  async function walCheckpoint(): Promise<ActionResult> {
+    return request<ActionResult>('/settings/checkpoint', { method: 'POST' })
+  }
+
+  async function deleteAllNotes(): Promise<ActionResult> {
+    return request<ActionResult>('/settings/delete-all-notes', { method: 'POST' })
+  }
+
+  async function resetDatabase(): Promise<ActionResult> {
+    return request<ActionResult>('/settings/reset', { method: 'POST' })
   }
 
   return {
@@ -100,6 +165,18 @@ export function useApi() {
     deleteMemory,
     recallMemories,
     getTags,
+    deleteTag,
+    removeTagFromNote,
+    getFolders,
+    createFolder,
+    updateFolder,
+    deleteFolder,
+    moveNoteToFolder,
     getStats,
+    getSettings,
+    vacuumDB,
+    walCheckpoint,
+    deleteAllNotes,
+    resetDatabase,
   }
 }

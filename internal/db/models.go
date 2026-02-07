@@ -8,6 +8,14 @@ import (
 	"database/sql"
 )
 
+type Folder struct {
+	ID        int64         `json:"id"`
+	Name      string        `json:"name"`
+	ParentID  sql.NullInt64 `json:"parent_id"`
+	CreatedAt sql.NullTime  `json:"created_at"`
+	UpdatedAt sql.NullTime  `json:"updated_at"`
+}
+
 type Note struct {
 	ID              int64          `json:"id"`
 	Title           string         `json:"title"`
@@ -18,6 +26,7 @@ type Note struct {
 	ExpiresAt       sql.NullTime   `json:"expires_at"`
 	Source          sql.NullString `json:"source"`
 	SourceRef       sql.NullString `json:"source_ref"`
+	FolderID        sql.NullInt64  `json:"folder_id"`
 }
 
 type NoteTag struct {

@@ -18,6 +18,8 @@ const editorContainer = ref<HTMLElement | null>(null)
 const editorView = shallowRef<EditorView | null>(null)
 const modified = ref(false)
 const docCompartment = new Compartment()
+const confirmingDelete = ref(false)
+const confirmingTagRemove = ref<number | null>(null)
 
 // Nord CodeMirror theme
 const nordTheme = EditorView.theme({
@@ -160,6 +162,48 @@ async function saveCurrentNote() {
   modified.value = false
 }
 
+function promptDeleteNote() {
+  if (!notesStore.currentNote) return
+  confirmingDelete.value = true
+}
+
+async function confirmDeleteCurrentNote() {
+  const note = notesStore.currentNote
+  if (!note) return
+  if (saveTimeout) clearTimeout(saveTimeout)
+  await notesStore.deleteNote(note.id)
+  confirmingDelete.value = false
+}
+
+function cancelDelete() {
+  confirmingDelete.value = false
+}
+
+function startRemoveTag(tagId: number) {
+  confirmingTagRemove.value = tagId
+}
+
+async function confirmRemoveTag(tagId: number) {
+  const note = notesStore.currentNote
+  if (!note) return
+  await notesStore.removeTagFromNote(note.id, tagId)
+  confirmingTagRemove.value = null
+}
+
+function cancelRemoveTag() {
+  confirmingTagRemove.value = null
+}
+
+function handleEditorKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    if (confirmingDelete.value) {
+      cancelDelete()
+    } else if (confirmingTagRemove.value !== null) {
+      cancelRemoveTag()
+    }
+  }
+}
+
 function registerVimCommands() {
   // :w - save
   Vim.defineEx('w', 'w', () => {
@@ -227,6 +271,47 @@ function registerVimCommands() {
   // :files - open fuzzy finder
   Vim.defineEx('files', 'files', () => {
     uiStore.openFuzzyFinder()
+  })
+
+  // :del / :delete - delete current note
+  Vim.defineEx('del', 'del', () => {
+    promptDeleteNote()
+  })
+  Vim.defineEx('delete', 'delete', () => {
+    promptDeleteNote()
+  })
+
+  // :mkdir <name> - create a new folder
+  Vim.defineEx('mkdir', 'mkdir', (_cm: unknown, params: { args?: string[] }) => {
+    const name = params.args?.join(' ')
+    if (!name) return
+    notesStore.createFolder({ name }).catch((e: Error) => {
+      console.error('Failed to create folder:', e)
+    })
+  })
+
+  // :mv <folder-name> - move current note to a folder by name
+  Vim.defineEx('mv', 'mv', (_cm: unknown, params: { args?: string[] }) => {
+    const note = notesStore.currentNote
+    if (!note) return
+    const folderName = params.args?.join(' ')
+    if (!folderName) {
+      // Move to root (no folder)
+      notesStore.moveNoteToFolder(note.id, null).catch((e: Error) => {
+        console.error('Failed to move note:', e)
+      })
+      return
+    }
+    const folder = notesStore.folders.find(
+      (f) => f.name.toLowerCase() === folderName.toLowerCase()
+    )
+    if (!folder) {
+      console.error(`Folder "${folderName}" not found`)
+      return
+    }
+    notesStore.moveNoteToFolder(note.id, folder.id).catch((e: Error) => {
+      console.error('Failed to move note:', e)
+    })
   })
 }
 
@@ -322,24 +407,81 @@ watch(
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
+  <div class="flex flex-col h-full" @keydown="handleEditorKeydown">
     <!-- Tab bar / note title -->
     <div
       v-if="notesStore.currentNote"
       class="flex items-center h-9 px-3 bg-nord1 border-b border-nord2 text-sm"
     >
+      <span
+        v-if="notesStore.currentNote.folder_id"
+        class="text-nord3 text-xs mr-1"
+      >{{ notesStore.folders.find(f => f.id === notesStore.currentNote!.folder_id)?.name || '' }} /</span>
       <span class="text-nord4">{{ notesStore.currentNote.title }}</span>
       <span v-if="modified" class="ml-1 text-nord13">[+]</span>
       <div class="flex-1" />
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-1.5">
+        <!-- Tags with remove buttons -->
         <span
           v-for="tag in notesStore.currentNote.tags"
           :key="tag.id"
-          class="text-[10px] px-1.5 py-px rounded bg-nord2 text-nord8"
+          class="group text-[10px] px-1.5 py-px rounded bg-nord2 text-nord8 inline-flex items-center gap-0.5"
         >
-          {{ tag.name }}
+          <!-- Tag removal confirmation -->
+          <template v-if="confirmingTagRemove === tag.id">
+            <span class="text-nord4">Remove?</span>
+            <button
+              @click="confirmRemoveTag(tag.id)"
+              class="text-nord11 hover:text-red-400 font-bold"
+            >Y</button>
+            <button
+              @click="cancelRemoveTag"
+              class="text-nord4 hover:text-nord6"
+            >N</button>
+          </template>
+          <template v-else>
+            {{ tag.name }}
+            <button
+              @click="startRemoveTag(tag.id)"
+              class="opacity-0 group-hover:opacity-100 transition-opacity hover:text-nord11 ml-0.5"
+              title="Remove tag from note"
+            >&times;</button>
+          </template>
         </span>
+
+        <!-- Delete note button -->
+        <button
+          @click="promptDeleteNote"
+          class="ml-2 p-1 rounded text-nord3 hover:text-nord11 hover:bg-nord2 transition-colors"
+          title="Delete note (:del)"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+          </svg>
+        </button>
       </div>
+    </div>
+
+    <!-- Delete confirmation bar -->
+    <div
+      v-if="confirmingDelete && notesStore.currentNote"
+      class="flex items-center justify-center gap-3 px-3 py-2 bg-nord11/10 border-b border-nord11/30 animate-slideDown"
+    >
+      <span class="text-sm text-nord4">
+        Delete "<span class="text-nord6 font-medium">{{ notesStore.currentNote.title }}</span>"?
+      </span>
+      <button
+        @click="confirmDeleteCurrentNote"
+        class="px-3 py-1 text-xs rounded bg-nord11 text-nord6 hover:brightness-110 transition-colors font-medium"
+      >
+        Delete
+      </button>
+      <button
+        @click="cancelDelete"
+        class="px-3 py-1 text-xs rounded bg-nord3 text-nord4 hover:bg-nord2 transition-colors"
+      >
+        Cancel
+      </button>
     </div>
 
     <!-- Editor area -->
@@ -356,6 +498,9 @@ watch(
             <div><kbd class="bg-nord2 px-1.5 py-0.5 rounded text-nord4">Ctrl+B</kbd> toggle sidebar</div>
             <div><kbd class="bg-nord2 px-1.5 py-0.5 rounded text-nord4">Ctrl+E</kbd> toggle preview</div>
             <div><kbd class="bg-nord2 px-1.5 py-0.5 rounded text-nord4">:new title</kbd> new note</div>
+            <div><kbd class="bg-nord2 px-1.5 py-0.5 rounded text-nord4">:del</kbd> delete note</div>
+            <div><kbd class="bg-nord2 px-1.5 py-0.5 rounded text-nord4">:mkdir name</kbd> create folder</div>
+            <div><kbd class="bg-nord2 px-1.5 py-0.5 rounded text-nord4">:mv folder</kbd> move to folder</div>
             <div><kbd class="bg-nord2 px-1.5 py-0.5 rounded text-nord4">:dash</kbd> dashboard</div>
           </div>
         </div>
@@ -366,6 +511,21 @@ watch(
 </template>
 
 <style>
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slideDown {
+  animation: slideDown 150ms ease-out;
+}
+
 /* Normal mode: blue block cursor */
 [data-vim-mode="normal"] .cm-fat-cursor {
   background-color: #81A1C1cc !important;

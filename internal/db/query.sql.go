@@ -28,10 +28,36 @@ func (q *Queries) AddTagToNote(ctx context.Context, arg AddTagToNoteParams) erro
 	return err
 }
 
+const createFolder = `-- name: CreateFolder :one
+
+INSERT INTO folders (name, parent_id)
+VALUES (?, ?)
+RETURNING id, name, parent_id, created_at, updated_at
+`
+
+type CreateFolderParams struct {
+	Name     string        `json:"name"`
+	ParentID sql.NullInt64 `json:"parent_id"`
+}
+
+// Folders --
+func (q *Queries) CreateFolder(ctx context.Context, arg CreateFolderParams) (Folder, error) {
+	row := q.db.QueryRowContext(ctx, createFolder, arg.Name, arg.ParentID)
+	var i Folder
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.ParentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createNote = `-- name: CreateNote :one
 INSERT INTO notes (title, content)
 VALUES (?, ?)
-RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref
+RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id
 `
 
 type CreateNoteParams struct {
@@ -52,6 +78,7 @@ func (q *Queries) CreateNote(ctx context.Context, arg CreateNoteParams) (Note, e
 		&i.ExpiresAt,
 		&i.Source,
 		&i.SourceRef,
+		&i.FolderID,
 	)
 	return i, err
 }
@@ -59,7 +86,7 @@ func (q *Queries) CreateNote(ctx context.Context, arg CreateNoteParams) (Note, e
 const createNoteWithTTL = `-- name: CreateNoteWithTTL :one
 INSERT INTO notes (title, content, expires_at, source, source_ref)
 VALUES (?, ?, ?, ?, ?)
-RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref
+RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id
 `
 
 type CreateNoteWithTTLParams struct {
@@ -89,6 +116,7 @@ func (q *Queries) CreateNoteWithTTL(ctx context.Context, arg CreateNoteWithTTLPa
 		&i.ExpiresAt,
 		&i.Source,
 		&i.SourceRef,
+		&i.FolderID,
 	)
 	return i, err
 }
@@ -115,6 +143,15 @@ DELETE FROM notes WHERE expires_at IS NOT NULL AND expires_at < datetime('now')
 
 func (q *Queries) DeleteExpiredNotes(ctx context.Context) (sql.Result, error) {
 	return q.db.ExecContext(ctx, deleteExpiredNotes)
+}
+
+const deleteFolder = `-- name: DeleteFolder :exec
+DELETE FROM folders WHERE id = ?
+`
+
+func (q *Queries) DeleteFolder(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteFolder, id)
+	return err
 }
 
 const deleteNote = `-- name: DeleteNote :exec
@@ -151,7 +188,7 @@ func (q *Queries) DeleteUnusedTags(ctx context.Context) (int64, error) {
 }
 
 const getAllNotes = `-- name: GetAllNotes :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes ORDER BY created_at DESC
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes ORDER BY created_at DESC
 `
 
 func (q *Queries) GetAllNotes(ctx context.Context) ([]Note, error) {
@@ -173,6 +210,7 @@ func (q *Queries) GetAllNotes(ctx context.Context) ([]Note, error) {
 			&i.ExpiresAt,
 			&i.Source,
 			&i.SourceRef,
+			&i.FolderID,
 		); err != nil {
 			return nil, err
 		}
@@ -188,7 +226,7 @@ func (q *Queries) GetAllNotes(ctx context.Context) ([]Note, error) {
 }
 
 const getExpiredNotes = `-- name: GetExpiredNotes :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes WHERE expires_at IS NOT NULL AND expires_at < datetime('now')
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes WHERE expires_at IS NOT NULL AND expires_at < datetime('now')
 `
 
 func (q *Queries) GetExpiredNotes(ctx context.Context) ([]Note, error) {
@@ -210,6 +248,7 @@ func (q *Queries) GetExpiredNotes(ctx context.Context) ([]Note, error) {
 			&i.ExpiresAt,
 			&i.Source,
 			&i.SourceRef,
+			&i.FolderID,
 		); err != nil {
 			return nil, err
 		}
@@ -224,8 +263,25 @@ func (q *Queries) GetExpiredNotes(ctx context.Context) ([]Note, error) {
 	return items, nil
 }
 
+const getFolder = `-- name: GetFolder :one
+SELECT id, name, parent_id, created_at, updated_at FROM folders WHERE id = ?
+`
+
+func (q *Queries) GetFolder(ctx context.Context, id int64) (Folder, error) {
+	row := q.db.QueryRowContext(ctx, getFolder, id)
+	var i Folder
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.ParentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getNote = `-- name: GetNote :one
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
 WHERE id = ?
 `
 
@@ -242,12 +298,53 @@ func (q *Queries) GetNote(ctx context.Context, id int64) (Note, error) {
 		&i.ExpiresAt,
 		&i.Source,
 		&i.SourceRef,
+		&i.FolderID,
 	)
 	return i, err
 }
 
+const getNotesByFolder = `-- name: GetNotesByFolder :many
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
+WHERE folder_id = ?
+ORDER BY created_at DESC
+`
+
+func (q *Queries) GetNotesByFolder(ctx context.Context, folderID sql.NullInt64) ([]Note, error) {
+	rows, err := q.db.QueryContext(ctx, getNotesByFolder, folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Note{}
+	for rows.Next() {
+		var i Note
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
+			&i.FolderID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getNotesByTagName = `-- name: GetNotesByTagName :many
-SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced, n.expires_at, n.source, n.source_ref FROM notes n
+SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced, n.expires_at, n.source, n.source_ref, n.folder_id FROM notes n
 INNER JOIN note_tags nt ON n.id = nt.note_id
 INNER JOIN tags t ON nt.tag_id = t.id
 WHERE t.name = ?
@@ -273,6 +370,7 @@ func (q *Queries) GetNotesByTagName(ctx context.Context, name string) ([]Note, e
 			&i.ExpiresAt,
 			&i.Source,
 			&i.SourceRef,
+			&i.FolderID,
 		); err != nil {
 			return nil, err
 		}
@@ -288,7 +386,7 @@ func (q *Queries) GetNotesByTagName(ctx context.Context, name string) ([]Note, e
 }
 
 const getNotesForTag = `-- name: GetNotesForTag :many
-SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced, n.expires_at, n.source, n.source_ref FROM notes n
+SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced, n.expires_at, n.source, n.source_ref, n.folder_id FROM notes n
 INNER JOIN note_tags nt ON n.id = nt.note_id
 WHERE nt.tag_id = ?
 ORDER BY n.created_at DESC
@@ -313,6 +411,7 @@ func (q *Queries) GetNotesForTag(ctx context.Context, tagID int64) ([]Note, erro
 			&i.ExpiresAt,
 			&i.Source,
 			&i.SourceRef,
+			&i.FolderID,
 		); err != nil {
 			return nil, err
 		}
@@ -328,7 +427,7 @@ func (q *Queries) GetNotesForTag(ctx context.Context, tagID int64) ([]Note, erro
 }
 
 const getNotesSince = `-- name: GetNotesSince :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes WHERE created_at >= ? ORDER BY created_at DESC
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes WHERE created_at >= ? ORDER BY created_at DESC
 `
 
 func (q *Queries) GetNotesSince(ctx context.Context, createdAt sql.NullTime) ([]Note, error) {
@@ -350,6 +449,7 @@ func (q *Queries) GetNotesSince(ctx context.Context, createdAt sql.NullTime) ([]
 			&i.ExpiresAt,
 			&i.Source,
 			&i.SourceRef,
+			&i.FolderID,
 		); err != nil {
 			return nil, err
 		}
@@ -362,6 +462,57 @@ func (q *Queries) GetNotesSince(ctx context.Context, createdAt sql.NullTime) ([]
 		return nil, err
 	}
 	return items, nil
+}
+
+const getNotesWithoutFolder = `-- name: GetNotesWithoutFolder :many
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
+WHERE folder_id IS NULL
+ORDER BY created_at DESC
+`
+
+func (q *Queries) GetNotesWithoutFolder(ctx context.Context) ([]Note, error) {
+	rows, err := q.db.QueryContext(ctx, getNotesWithoutFolder)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Note{}
+	for rows.Next() {
+		var i Note
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
+			&i.FolderID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTag = `-- name: GetTag :one
+SELECT id, name FROM tags WHERE id = ?
+`
+
+func (q *Queries) GetTag(ctx context.Context, id int64) (Tag, error) {
+	row := q.db.QueryRowContext(ctx, getTag, id)
+	var i Tag
+	err := row.Scan(&i.ID, &i.Name)
+	return i, err
 }
 
 const getTagByName = `-- name: GetTagByName :one
@@ -444,7 +595,7 @@ func (q *Queries) GetTagsWithCount(ctx context.Context) ([]GetTagsWithCountRow, 
 }
 
 const getUnsynced = `-- name: GetUnsynced :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
 WHERE embedding_synced = FALSE
 `
 
@@ -467,6 +618,40 @@ func (q *Queries) GetUnsynced(ctx context.Context) ([]Note, error) {
 			&i.ExpiresAt,
 			&i.Source,
 			&i.SourceRef,
+			&i.FolderID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFolders = `-- name: ListFolders :many
+SELECT id, name, parent_id, created_at, updated_at FROM folders ORDER BY name
+`
+
+func (q *Queries) ListFolders(ctx context.Context) ([]Folder, error) {
+	rows, err := q.db.QueryContext(ctx, listFolders)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Folder{}
+	for rows.Next() {
+		var i Folder
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ParentID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -482,7 +667,7 @@ func (q *Queries) GetUnsynced(ctx context.Context) ([]Note, error) {
 }
 
 const listNotes = `-- name: ListNotes :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
 ORDER BY created_at DESC
 LIMIT ? OFFSET ?
 `
@@ -511,6 +696,7 @@ func (q *Queries) ListNotes(ctx context.Context, arg ListNotesParams) ([]Note, e
 			&i.ExpiresAt,
 			&i.Source,
 			&i.SourceRef,
+			&i.FolderID,
 		); err != nil {
 			return nil, err
 		}
@@ -564,6 +750,22 @@ func (q *Queries) MarkEmbeddingSynced(ctx context.Context, id int64) error {
 	return err
 }
 
+const moveNoteToFolder = `-- name: MoveNoteToFolder :exec
+UPDATE notes
+SET folder_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type MoveNoteToFolderParams struct {
+	FolderID sql.NullInt64 `json:"folder_id"`
+	ID       int64         `json:"id"`
+}
+
+func (q *Queries) MoveNoteToFolder(ctx context.Context, arg MoveNoteToFolderParams) error {
+	_, err := q.db.ExecContext(ctx, moveNoteToFolder, arg.FolderID, arg.ID)
+	return err
+}
+
 const removeAllTagsFromNote = `-- name: RemoveAllTagsFromNote :exec
 DELETE FROM note_tags WHERE note_id = ?
 `
@@ -589,7 +791,7 @@ func (q *Queries) RemoveTagFromNote(ctx context.Context, arg RemoveTagFromNotePa
 }
 
 const searchNotesByTitle = `-- name: SearchNotesByTitle :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
 WHERE title LIKE ?
 ORDER BY created_at DESC
 `
@@ -613,6 +815,7 @@ func (q *Queries) SearchNotesByTitle(ctx context.Context, title string) ([]Note,
 			&i.ExpiresAt,
 			&i.Source,
 			&i.SourceRef,
+			&i.FolderID,
 		); err != nil {
 			return nil, err
 		}
@@ -628,7 +831,7 @@ func (q *Queries) SearchNotesByTitle(ctx context.Context, title string) ([]Note,
 }
 
 const searchNotesContent = `-- name: SearchNotesContent :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
 WHERE content LIKE ? OR title LIKE ?
 ORDER BY updated_at DESC
 LIMIT ?
@@ -659,6 +862,7 @@ func (q *Queries) SearchNotesContent(ctx context.Context, arg SearchNotesContent
 			&i.ExpiresAt,
 			&i.Source,
 			&i.SourceRef,
+			&i.FolderID,
 		); err != nil {
 			return nil, err
 		}
@@ -673,11 +877,37 @@ func (q *Queries) SearchNotesContent(ctx context.Context, arg SearchNotesContent
 	return items, nil
 }
 
+const updateFolder = `-- name: UpdateFolder :one
+UPDATE folders
+SET name = ?, parent_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING id, name, parent_id, created_at, updated_at
+`
+
+type UpdateFolderParams struct {
+	Name     string        `json:"name"`
+	ParentID sql.NullInt64 `json:"parent_id"`
+	ID       int64         `json:"id"`
+}
+
+func (q *Queries) UpdateFolder(ctx context.Context, arg UpdateFolderParams) (Folder, error) {
+	row := q.db.QueryRowContext(ctx, updateFolder, arg.Name, arg.ParentID, arg.ID)
+	var i Folder
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.ParentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateNote = `-- name: UpdateNote :one
 UPDATE notes
 SET title = ?, content = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref
+RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id
 `
 
 type UpdateNoteParams struct {
@@ -699,6 +929,7 @@ func (q *Queries) UpdateNote(ctx context.Context, arg UpdateNoteParams) (Note, e
 		&i.ExpiresAt,
 		&i.Source,
 		&i.SourceRef,
+		&i.FolderID,
 	)
 	return i, err
 }

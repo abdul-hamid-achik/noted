@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,7 @@ type NoteResponse struct {
 	Title     string     `json:"title"`
 	Content   string     `json:"content"`
 	Tags      []db.Tag   `json:"tags"`
+	FolderID  *int64     `json:"folder_id,omitempty"`
 	CreatedAt *time.Time `json:"created_at"`
 	UpdatedAt *time.Time `json:"updated_at"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -126,7 +128,13 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/notes/search", s.handleSearchNotes)
 	mux.HandleFunc("/api/notes/", s.handleNoteByID)
 	mux.HandleFunc("/api/notes", s.handleNotes)
-	mux.HandleFunc("/api/tags", s.handleListTags)
+	mux.HandleFunc("/api/tags/", s.handleTagByID)
+	mux.HandleFunc("/api/tags", s.handleTags)
+	mux.HandleFunc("/api/folders/", s.handleFolderByID)
+	mux.HandleFunc("/api/folders", s.handleFolders)
+	mux.HandleFunc("/api/settings/vacuum", s.handleVacuum)
+	mux.HandleFunc("/api/settings/wal-checkpoint", s.handleWALCheckpoint)
+	mux.HandleFunc("/api/settings", s.handleSettings)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/events", s.handleSSE)
 
@@ -222,6 +230,9 @@ func noteToResponse(n db.Note, tags []db.Tag) NoteResponse {
 		Title:   n.Title,
 		Content: n.Content,
 		Tags:    tags,
+	}
+	if n.FolderID.Valid {
+		resp.FolderID = &n.FolderID.Int64
 	}
 	if n.CreatedAt.Valid {
 		resp.CreatedAt = &n.CreatedAt.Time
@@ -461,31 +472,6 @@ func (s *Server) handleCreateNote(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusCreated, resp)
 }
 
-func (s *Server) handleNoteByID(w http.ResponseWriter, r *http.Request) {
-	// Parse ID from URL: /api/notes/{id}
-	idStr := strings.TrimPrefix(r.URL.Path, "/api/notes/")
-	if idStr == "" {
-		s.writeError(w, http.StatusBadRequest, "note ID required")
-		return
-	}
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid note ID")
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		s.handleGetNote(w, r, id)
-	case http.MethodPut:
-		s.handleUpdateNote(w, r, id)
-	case http.MethodDelete:
-		s.handleDeleteNote(w, r, id)
-	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-	}
-}
-
 func (s *Server) handleGetNote(w http.ResponseWriter, r *http.Request, id int64) {
 	ctx := r.Context()
 
@@ -622,7 +608,7 @@ func (s *Server) handleSearchNotes(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, result)
 }
 
-func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -638,6 +624,89 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 		tags = []db.GetTagsWithCountRow{}
 	}
 	s.writeJSON(w, http.StatusOK, tags)
+}
+
+func (s *Server) handleTagByID(w http.ResponseWriter, r *http.Request) {
+	// Parse: /api/tags/{id} or /api/tags/{id}/notes/{noteId}
+	path := strings.TrimPrefix(r.URL.Path, "/api/tags/")
+	if path == "" {
+		s.writeError(w, http.StatusBadRequest, "tag ID required")
+		return
+	}
+
+	// Check for /api/tags/{id}/notes/{noteId}
+	parts := strings.Split(path, "/")
+	if len(parts) == 3 && parts[1] == "notes" {
+		tagID, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid tag ID")
+			return
+		}
+		noteID, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid note ID")
+			return
+		}
+		if r.Method != http.MethodDelete {
+			s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleRemoveTagFromNote(w, r, tagID, noteID)
+		return
+	}
+
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid tag ID")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodDelete:
+		s.handleDeleteTag(w, r, id)
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleDeleteTag(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+
+	_, err := s.queries.GetTag(ctx, id)
+	if err == sql.ErrNoRows {
+		s.writeError(w, http.StatusNotFound, "tag not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("failed to get tag", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to delete tag")
+		return
+	}
+
+	if err := s.queries.DeleteTag(ctx, id); err != nil {
+		s.logger.Error("failed to delete tag", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to delete tag")
+		return
+	}
+
+	s.broadcast(Event{Type: "tag_deleted", Data: map[string]int64{"id": id}})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleRemoveTagFromNote(w http.ResponseWriter, r *http.Request, tagID, noteID int64) {
+	ctx := r.Context()
+
+	if err := s.queries.RemoveTagFromNote(ctx, db.RemoveTagFromNoteParams{
+		NoteID: noteID,
+		TagID:  tagID,
+	}); err != nil {
+		s.logger.Error("failed to remove tag from note", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to remove tag from note")
+		return
+	}
+
+	s.broadcast(Event{Type: "note_updated", Data: map[string]int64{"note_id": noteID, "tag_id": tagID}})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
@@ -702,5 +771,413 @@ func formatBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// --- Folder types ---
+
+type createFolderRequest struct {
+	Name     string `json:"name"`
+	ParentID *int64 `json:"parent_id,omitempty"`
+}
+
+type updateFolderRequest struct {
+	Name     string `json:"name"`
+	ParentID *int64 `json:"parent_id,omitempty"`
+}
+
+type moveNoteRequest struct {
+	FolderID *int64 `json:"folder_id"`
+}
+
+// FolderResponse is a folder with optional metadata.
+type FolderResponse struct {
+	ID        int64      `json:"id"`
+	Name      string     `json:"name"`
+	ParentID  *int64     `json:"parent_id,omitempty"`
+	CreatedAt *time.Time `json:"created_at"`
+	UpdatedAt *time.Time `json:"updated_at"`
+}
+
+func folderToResponse(f db.Folder) FolderResponse {
+	resp := FolderResponse{
+		ID:   f.ID,
+		Name: f.Name,
+	}
+	if f.ParentID.Valid {
+		resp.ParentID = &f.ParentID.Int64
+	}
+	if f.CreatedAt.Valid {
+		resp.CreatedAt = &f.CreatedAt.Time
+	}
+	if f.UpdatedAt.Valid {
+		resp.UpdatedAt = &f.UpdatedAt.Time
+	}
+	return resp
+}
+
+// --- Folder handlers ---
+
+func (s *Server) handleFolders(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleListFolders(w, r)
+	case http.MethodPost:
+		s.handleCreateFolder(w, r)
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
+	folders, err := s.queries.ListFolders(r.Context())
+	if err != nil {
+		s.logger.Error("failed to list folders", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to list folders")
+		return
+	}
+	result := make([]FolderResponse, 0, len(folders))
+	for _, f := range folders {
+		result = append(result, folderToResponse(f))
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var req createFolderRequest
+	if err := s.readJSON(r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		s.writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	params := db.CreateFolderParams{Name: req.Name}
+	if req.ParentID != nil {
+		params.ParentID = sql.NullInt64{Int64: *req.ParentID, Valid: true}
+	}
+
+	folder, err := s.queries.CreateFolder(ctx, params)
+	if err != nil {
+		s.logger.Error("failed to create folder", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to create folder")
+		return
+	}
+
+	resp := folderToResponse(folder)
+	s.broadcast(Event{Type: "folder_created", Data: resp})
+	s.writeJSON(w, http.StatusCreated, resp)
+}
+
+func (s *Server) handleFolderByID(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/folders/")
+	if idStr == "" {
+		s.writeError(w, http.StatusBadRequest, "folder ID required")
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid folder ID")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		s.handleGetFolder(w, r, id)
+	case http.MethodPut:
+		s.handleUpdateFolder(w, r, id)
+	case http.MethodDelete:
+		s.handleDeleteFolder(w, r, id)
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleGetFolder(w http.ResponseWriter, r *http.Request, id int64) {
+	folder, err := s.queries.GetFolder(r.Context(), id)
+	if err == sql.ErrNoRows {
+		s.writeError(w, http.StatusNotFound, "folder not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("failed to get folder", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to get folder")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, folderToResponse(folder))
+}
+
+func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+	var req updateFolderRequest
+	if err := s.readJSON(r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		s.writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	params := db.UpdateFolderParams{ID: id, Name: req.Name}
+	if req.ParentID != nil {
+		params.ParentID = sql.NullInt64{Int64: *req.ParentID, Valid: true}
+	}
+
+	folder, err := s.queries.UpdateFolder(ctx, params)
+	if err == sql.ErrNoRows {
+		s.writeError(w, http.StatusNotFound, "folder not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("failed to update folder", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to update folder")
+		return
+	}
+
+	resp := folderToResponse(folder)
+	s.broadcast(Event{Type: "folder_updated", Data: resp})
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+
+	_, err := s.queries.GetFolder(ctx, id)
+	if err == sql.ErrNoRows {
+		s.writeError(w, http.StatusNotFound, "folder not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("failed to get folder", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to delete folder")
+		return
+	}
+
+	if err := s.queries.DeleteFolder(ctx, id); err != nil {
+		s.logger.Error("failed to delete folder", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to delete folder")
+		return
+	}
+
+	s.broadcast(Event{Type: "folder_deleted", Data: map[string]int64{"id": id}})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Note move handler ---
+
+func (s *Server) handleNoteByID(w http.ResponseWriter, r *http.Request) {
+	// Parse: /api/notes/{id} or /api/notes/{id}/move
+	path := strings.TrimPrefix(r.URL.Path, "/api/notes/")
+	if path == "" {
+		s.writeError(w, http.StatusBadRequest, "note ID required")
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid note ID")
+		return
+	}
+
+	// Check for /api/notes/{id}/move
+	if len(parts) == 2 && parts[1] == "move" {
+		if r.Method != http.MethodPut {
+			s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleMoveNote(w, r, id)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		s.handleGetNote(w, r, id)
+	case http.MethodPut:
+		s.handleUpdateNote(w, r, id)
+	case http.MethodDelete:
+		s.handleDeleteNote(w, r, id)
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleMoveNote(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+
+	var req moveNoteRequest
+	if err := s.readJSON(r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Check note exists
+	_, err := s.queries.GetNote(ctx, id)
+	if err == sql.ErrNoRows {
+		s.writeError(w, http.StatusNotFound, "note not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("failed to get note", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to move note")
+		return
+	}
+
+	params := db.MoveNoteToFolderParams{ID: id}
+	if req.FolderID != nil {
+		// Verify folder exists
+		_, err := s.queries.GetFolder(ctx, *req.FolderID)
+		if err == sql.ErrNoRows {
+			s.writeError(w, http.StatusNotFound, "folder not found")
+			return
+		}
+		if err != nil {
+			s.logger.Error("failed to get folder", "error", err)
+			s.writeError(w, http.StatusInternalServerError, "failed to move note")
+			return
+		}
+		params.FolderID = sql.NullInt64{Int64: *req.FolderID, Valid: true}
+	}
+
+	if err := s.queries.MoveNoteToFolder(ctx, params); err != nil {
+		s.logger.Error("failed to move note", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to move note")
+		return
+	}
+
+	// Return updated note
+	note, err := s.queries.GetNote(ctx, id)
+	if err != nil {
+		s.logger.Error("failed to get note after move", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to get note")
+		return
+	}
+	resp, err := s.noteWithTags(ctx, note)
+	if err != nil {
+		s.logger.Error("failed to get tags", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to get note")
+		return
+	}
+
+	s.broadcast(Event{Type: "note_updated", Data: resp})
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+// --- Settings handlers ---
+
+type SettingsResponse struct {
+	DB      DBSettings      `json:"db"`
+	Runtime RuntimeSettings `json:"runtime"`
+	App     AppSettings     `json:"app"`
+}
+
+type DBSettings struct {
+	JournalMode  string `json:"journal_mode"`
+	PageSize     int64  `json:"page_size"`
+	CacheSize    int64  `json:"cache_size"`
+	BusyTimeout  int64  `json:"busy_timeout"`
+	ForeignKeys  bool   `json:"foreign_keys"`
+	WALPages     int64  `json:"wal_pages"`
+}
+
+type RuntimeSettings struct {
+	GOOS          string `json:"goos"`
+	GOARCH        string `json:"goarch"`
+	NumGoroutine  int    `json:"num_goroutine"`
+	NumCPU        int    `json:"num_cpu"`
+	GoVersion     string `json:"go_version"`
+}
+
+type AppSettings struct {
+	Version string `json:"version"`
+}
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	ctx := r.Context()
+	settings := SettingsResponse{}
+
+	// DB pragmas
+	pragmaString := func(name string) string {
+		var val string
+		_ = s.conn.QueryRowContext(ctx, "PRAGMA "+name).Scan(&val)
+		return val
+	}
+	pragmaInt := func(name string) int64 {
+		var val int64
+		_ = s.conn.QueryRowContext(ctx, "PRAGMA "+name).Scan(&val)
+		return val
+	}
+
+	settings.DB.JournalMode = pragmaString("journal_mode")
+	settings.DB.PageSize = pragmaInt("page_size")
+	settings.DB.CacheSize = pragmaInt("cache_size")
+	settings.DB.BusyTimeout = pragmaInt("busy_timeout")
+	settings.DB.ForeignKeys = pragmaInt("foreign_keys") == 1
+
+	// WAL pages count
+	var walPages int64
+	row := s.conn.QueryRowContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)")
+	var blocked, total, checkpointed int64
+	if err := row.Scan(&blocked, &total, &checkpointed); err == nil {
+		walPages = total
+	}
+	settings.DB.WALPages = walPages
+
+	// Runtime
+	settings.Runtime.GOOS = runtime.GOOS
+	settings.Runtime.GOARCH = runtime.GOARCH
+	settings.Runtime.NumGoroutine = runtime.NumGoroutine()
+	settings.Runtime.NumCPU = runtime.NumCPU()
+	settings.Runtime.GoVersion = runtime.Version()
+
+	// App
+	settings.App.Version = "dev"
+
+	s.writeJSON(w, http.StatusOK, settings)
+}
+
+func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if _, err := s.conn.ExecContext(r.Context(), "VACUUM"); err != nil {
+		s.logger.Error("failed to vacuum", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to vacuum database")
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleWALCheckpoint(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	row := s.conn.QueryRowContext(r.Context(), "PRAGMA wal_checkpoint(TRUNCATE)")
+	var blocked, total, checkpointed int64
+	if err := row.Scan(&blocked, &total, &checkpointed); err != nil {
+		s.logger.Error("failed to checkpoint WAL", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to checkpoint WAL")
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"status":       "ok",
+		"blocked":      blocked,
+		"total":        total,
+		"checkpointed": checkpointed,
+	})
 }
 

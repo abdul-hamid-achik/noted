@@ -17,7 +17,7 @@ useWebSocket((event) => {
 })
 
 onMounted(async () => {
-  await Promise.all([notesStore.fetchNotes(), notesStore.fetchTags()])
+  await Promise.all([notesStore.fetchNotes(), notesStore.fetchTags(), notesStore.fetchFolders()])
 })
 
 function handleKeydown(e: KeyboardEvent) {
