@@ -21,9 +21,44 @@ tasks:
     generates:
       - internal/db/*.go
 
+  # --- Frontend tasks ---
+
+  web:install:
+    desc: Install frontend dependencies
+    dir: web
+    cmds:
+      - bun install
+    sources:
+      - package.json
+    generates:
+      - node_modules/.package-lock.json
+
+  web:build:
+    desc: Build frontend assets
+    dir: web
+    deps: [web:install]
+    cmds:
+      - bun run build
+    sources:
+      - src/**/*
+      - index.html
+      - vite.config.ts
+      - package.json
+    generates:
+      - dist/**/*
+
+  web:dev:
+    desc: Start frontend dev server (with HMR)
+    dir: web
+    deps: [web:install]
+    cmds:
+      - bun run dev
+
+  # --- Go tasks ---
+
   build:
-    desc: Build the binary
-    deps: [generate]
+    desc: Build the binary (with embedded frontend)
+    deps: [generate, web:build]
     vars:
       VERSION:
         sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
@@ -40,9 +75,22 @@ tasks:
     generates:
       - "{{.BINARY_DIR}}/{{.BINARY_NAME}}"
 
+  build:go:
+    desc: Build Go binary only (no frontend)
+    deps: [generate]
+    vars:
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+      COMMIT:
+        sh: git rev-parse --short HEAD 2>/dev/null || echo "none"
+      BUILD_DATE:
+        sh: date -u +%Y-%m-%dT%H:%M:%SZ
+    cmds:
+      - go build -ldflags "-X github.com/abdul-hamid-achik/noted/cmd.Version={{.VERSION}} -X github.com/abdul-hamid-achik/noted/cmd.Commit={{.COMMIT}} -X github.com/abdul-hamid-achik/noted/cmd.BuildDate={{.BUILD_DATE}}" -o {{.BINARY_DIR}}/{{.BINARY_NAME}} .
+
   install:
     desc: Install to GOPATH/bin
-    deps: [generate]
+    deps: [generate, web:build]
     cmds:
       - go install .
 
@@ -62,9 +110,24 @@ tasks:
     cmds:
       - rm -rf {{.BINARY_DIR}}
       - rm -rf internal/db/*.go
+      - rm -rf web/dist
+      - rm -rf web/node_modules
 
   dev:
-    desc: Build and run
+    desc: Build and run CLI
     deps: [build]
     cmds:
-      - ./{{.BINARY_DIR}}/{{.BINARY_NAME}} {{.CLI_ARGS}}     -
+      - ./{{.BINARY_DIR}}/{{.BINARY_NAME}} {{.CLI_ARGS}}
+
+  dev:web:
+    desc: Run Go backend + frontend dev server (for web development)
+    deps: [build:go]
+    cmds:
+      - task: dev:web:backend
+      - task: web:dev
+
+  dev:web:backend:
+    desc: Run the Go server in dev mode
+    deps: [build:go]
+    cmds:
+      - ./{{.BINARY_DIR}}/{{.BINARY_NAME}} serve --port 3000

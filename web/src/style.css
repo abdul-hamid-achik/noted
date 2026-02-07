@@ -1,0 +1,170 @@
+@import "tailwindcss";
+
+@theme {
+  --color-nord0: #2E3440;
+  --color-nord1: #3B4252;
+  --color-nord2: #434C5E;
+  --color-nord3: #4C566A;
+  --color-nord4: #D8DEE9;
+  --color-nord5: #E5E9F0;
+  --color-nord6: #ECEFF4;
+  --color-nord7: #8FBCBB;
+  --color-nord8: #88C0D0;
+  --color-nord9: #81A1C1;
+  --color-nord10: #5E81AC;
+  --color-nord11: #BF616A;
+  --color-nord12: #D08770;
+  --color-nord13: #EBCB8B;
+  --color-nord14: #A3BE8C;
+  --color-nord15: #B48EAD;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #2E3440;
+  color: #D8DEE9;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styles */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #2E3440;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4C566A;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #434C5E;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #4C566A #2E3440;
+}
+
+/* CodeMirror overrides */
+.cm-editor {
+  height: 100%;
+  font-family: var(--font-mono);
+}
+
+.cm-editor .cm-scroller {
+  font-family: var(--font-mono);
+}
+
+.cm-editor.cm-focused {
+  outline: none;
+}
+
+/* Markdown preview prose styles */
+.prose-nord h1,
+.prose-nord h2,
+.prose-nord h3,
+.prose-nord h4,
+.prose-nord h5,
+.prose-nord h6 {
+  color: #ECEFF4;
+  font-weight: 600;
+}
+
+.prose-nord h1 { font-size: 1.75rem; margin-top: 1.5rem; margin-bottom: 0.75rem; }
+.prose-nord h2 { font-size: 1.5rem; margin-top: 1.25rem; margin-bottom: 0.5rem; }
+.prose-nord h3 { font-size: 1.25rem; margin-top: 1rem; margin-bottom: 0.5rem; }
+
+.prose-nord p {
+  margin-bottom: 0.75rem;
+  line-height: 1.7;
+}
+
+.prose-nord a {
+  color: #88C0D0;
+  text-decoration: underline;
+}
+
+.prose-nord a:hover {
+  color: #8FBCBB;
+}
+
+.prose-nord code {
+  background: #3B4252;
+  color: #D08770;
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  font-size: 0.875em;
+  font-family: var(--font-mono);
+}
+
+.prose-nord pre {
+  background: #3B4252;
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+
+.prose-nord pre code {
+  background: transparent;
+  color: #D8DEE9;
+  padding: 0;
+}
+
+.prose-nord blockquote {
+  border-left: 3px solid #81A1C1;
+  padding-left: 1rem;
+  color: #E5E9F0;
+  margin: 0.75rem 0;
+}
+
+.prose-nord ul,
+.prose-nord ol {
+  padding-left: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.prose-nord li {
+  margin-bottom: 0.25rem;
+}
+
+.prose-nord hr {
+  border-color: #434C5E;
+  margin: 1.5rem 0;
+}
+
+.prose-nord table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+}
+
+.prose-nord th,
+.prose-nord td {
+  border: 1px solid #434C5E;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.prose-nord th {
+  background: #3B4252;
+  color: #ECEFF4;
+  font-weight: 600;
+}
+
+.prose-nord img {
+  max-width: 100%;
+  border-radius: 6px;
+}
