@@ -46,23 +46,47 @@ watch(
 )
 
 function handleKeydown(e: KeyboardEvent) {
+  const mod = e.ctrlKey || e.metaKey
+
   // Cmd/Ctrl+P: fuzzy finder (note search)
-  if ((e.ctrlKey || e.metaKey) && e.key === 'p' && !e.shiftKey) {
+  if (mod && e.key === 'p' && !e.shiftKey) {
     e.preventDefault()
     uiStore.openFuzzyFinder()
   }
   // Cmd/Ctrl+Shift+P: command palette
-  if ((e.ctrlKey || e.metaKey) && e.key === 'p' && e.shiftKey) {
+  if (mod && e.key.toLowerCase() === 'p' && e.shiftKey) {
     e.preventDefault()
     uiStore.openCommandPalette()
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+  // Cmd/Ctrl+B: toggle sidebar
+  if (mod && e.key === 'b' && !e.shiftKey) {
     e.preventDefault()
     uiStore.toggleSidebar()
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
+  // Cmd/Ctrl+E: toggle preview
+  if (mod && e.key === 'e') {
     e.preventDefault()
     uiStore.togglePreview()
+  }
+  // Cmd/Ctrl+N: new note
+  if (mod && e.key === 'n' && !e.shiftKey) {
+    e.preventDefault()
+    notesStore.createNote({ title: 'Untitled', content: '' })
+  }
+  // Cmd/Ctrl+Shift+B: toggle backlinks panel
+  if (mod && e.key.toLowerCase() === 'b' && e.shiftKey) {
+    e.preventDefault()
+    uiStore.toggleBacklinks()
+  }
+  // Cmd/Ctrl+Shift+O: toggle outline panel
+  if (mod && e.key.toLowerCase() === 'o' && e.shiftKey) {
+    e.preventDefault()
+    uiStore.toggleOutline()
+  }
+  // Cmd/Ctrl+Shift+G: go to graph view
+  if (mod && e.key.toLowerCase() === 'g' && e.shiftKey) {
+    e.preventDefault()
+    router.push('/graph')
   }
 }
 </script>
@@ -96,25 +120,25 @@ function handleKeydown(e: KeyboardEvent) {
         <div class="flex border-b border-nord2 bg-nord1">
           <button
             v-if="uiStore.previewOpen"
-            @click="uiStore.previewOpen = true; uiStore.backlinksOpen = false; uiStore.outlineOpen = false"
+            @click="uiStore.activeRightPanel = 'preview'"
             class="px-3 py-1.5 text-xs transition-colors"
-            :class="uiStore.previewOpen && !uiStore.backlinksOpen && !uiStore.outlineOpen ? 'text-nord8 border-b border-nord8' : 'text-nord3 hover:text-nord4'"
+            :class="uiStore.activeRightPanel === 'preview' ? 'text-nord8 border-b border-nord8' : 'text-nord3 hover:text-nord4'"
           >
             Preview
           </button>
           <button
             v-if="uiStore.backlinksOpen"
-            @click="uiStore.backlinksOpen = true; uiStore.previewOpen = false; uiStore.outlineOpen = false"
+            @click="uiStore.activeRightPanel = 'backlinks'"
             class="px-3 py-1.5 text-xs transition-colors"
-            :class="uiStore.backlinksOpen && !uiStore.previewOpen && !uiStore.outlineOpen ? 'text-nord8 border-b border-nord8' : 'text-nord3 hover:text-nord4'"
+            :class="uiStore.activeRightPanel === 'backlinks' ? 'text-nord8 border-b border-nord8' : 'text-nord3 hover:text-nord4'"
           >
             Backlinks
           </button>
           <button
             v-if="uiStore.outlineOpen"
-            @click="uiStore.outlineOpen = true; uiStore.previewOpen = false; uiStore.backlinksOpen = false"
+            @click="uiStore.activeRightPanel = 'outline'"
             class="px-3 py-1.5 text-xs transition-colors"
-            :class="uiStore.outlineOpen && !uiStore.previewOpen && !uiStore.backlinksOpen ? 'text-nord8 border-b border-nord8' : 'text-nord3 hover:text-nord4'"
+            :class="uiStore.activeRightPanel === 'outline' ? 'text-nord8 border-b border-nord8' : 'text-nord3 hover:text-nord4'"
           >
             Outline
           </button>
@@ -122,9 +146,9 @@ function handleKeydown(e: KeyboardEvent) {
 
         <!-- Panel content -->
         <div class="flex-1 overflow-hidden">
-          <MarkdownPreview v-if="uiStore.previewOpen && !uiStore.backlinksOpen && !uiStore.outlineOpen" />
-          <BacklinksPanel v-else-if="uiStore.backlinksOpen" />
-          <OutlinePanel v-else-if="uiStore.outlineOpen" />
+          <MarkdownPreview v-if="uiStore.activeRightPanel === 'preview'" />
+          <BacklinksPanel v-else-if="uiStore.activeRightPanel === 'backlinks'" />
+          <OutlinePanel v-else-if="uiStore.activeRightPanel === 'outline'" />
         </div>
       </aside>
     </div>

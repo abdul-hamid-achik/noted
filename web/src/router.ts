@@ -24,6 +24,11 @@ const router = createRouter({
       component: () => import('./components/SettingsPage.vue'),
     },
     {
+      path: '/graph',
+      name: 'graph',
+      component: () => import('./components/GraphView.vue'),
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/',
     },

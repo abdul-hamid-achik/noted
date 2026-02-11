@@ -29,6 +29,7 @@ const commands = computed<Command[]>(() => {
     // Navigation
     { id: 'go-dashboard', label: 'Go to Dashboard', category: 'navigation', action: () => router.push('/dashboard') },
     { id: 'go-settings', label: 'Go to Settings', category: 'navigation', action: () => router.push('/settings') },
+    { id: 'go-graph', label: 'Go to Graph', category: 'navigation', action: () => router.push('/graph') },
     { id: 'go-editor', label: 'Go to Editor', category: 'navigation', action: () => router.push('/') },
     // View toggles
     { id: 'toggle-sidebar', label: 'Toggle Sidebar', shortcut: 'Ctrl+B', category: 'view', action: () => uiStore.toggleSidebar() },

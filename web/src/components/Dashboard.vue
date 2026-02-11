@@ -147,6 +147,12 @@ function goToEditor() {
       </div>
       <div class="flex items-center gap-2">
         <button
+          @click="router.push('/graph')"
+          class="bg-nord2 hover:bg-nord3 text-nord6 text-sm font-medium py-1.5 px-4 rounded transition-colors"
+        >
+          Graph
+        </button>
+        <button
           @click="router.push('/settings')"
           class="p-1.5 rounded hover:bg-nord2 text-nord3 hover:text-nord4 transition-colors"
           title="Settings"

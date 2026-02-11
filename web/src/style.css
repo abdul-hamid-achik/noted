@@ -71,6 +71,29 @@ body {
   outline: none;
 }
 
+/* Autocomplete dropdown Nord theme */
+.cm-tooltip-autocomplete {
+  background: #3B4252 !important;
+  border: 1px solid #434C5E !important;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.cm-tooltip-autocomplete ul {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.cm-tooltip-autocomplete ul li {
+  color: #D8DEE9;
+  padding: 4px 8px;
+}
+
+.cm-tooltip-autocomplete ul li[aria-selected] {
+  background: #81A1C1 !important;
+  color: #2E3440 !important;
+}
+
 /* Markdown preview prose styles */
 .prose-nord h1,
 .prose-nord h2,

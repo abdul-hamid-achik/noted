@@ -6,6 +6,8 @@ import { vim, Vim, getCM } from '@replit/codemirror-vim'
 import { markdown } from '@codemirror/lang-markdown'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
+import { autocompletion } from '@codemirror/autocomplete'
+import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete'
 import { tags } from '@lezer/highlight'
 import { useNotesStore } from '../stores/notes'
 import { useUiStore } from '../stores/ui'
@@ -315,6 +317,26 @@ function registerVimCommands() {
   })
 }
 
+function wikilinkCompletions(context: CompletionContext): CompletionResult | null {
+  // Look for [[ before cursor
+  const line = context.state.doc.lineAt(context.pos)
+  const textBefore = line.text.slice(0, context.pos - line.from)
+  const match = textBefore.match(/\[\[([^\]]*)$/)
+  if (!match) return null
+
+  const from = context.pos - match[1].length
+  const query = match[1].toLowerCase()
+
+  const options = notesStore.notes
+    .filter((n) => n.title.toLowerCase().includes(query))
+    .map((n) => ({
+      label: n.title,
+      apply: `${n.title}]]`,
+    }))
+
+  return { from, options, filter: false }
+}
+
 function createEditor(container: HTMLElement, content: string) {
   const updateListener = EditorView.updateListener.of((update) => {
     if (update.docChanged) {
@@ -345,6 +367,7 @@ function createEditor(container: HTMLElement, content: string) {
       markdown(),
       nordTheme,
       syntaxHighlighting(nordHighlightStyle),
+      autocompletion({ override: [wikilinkCompletions] }),
       updateListener,
       EditorView.lineWrapping,
       docCompartment.of([]),

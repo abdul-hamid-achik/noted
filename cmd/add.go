@@ -7,6 +7,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -38,13 +40,24 @@ Examples:
 		ttlStr, _ := cmd.Flags().GetString("ttl")
 		source, _ := cmd.Flags().GetString("source")
 		sourceRef, _ := cmd.Flags().GetString("source-ref")
+		folderID, _ := cmd.Flags().GetInt64("folder")
 		asJSON, _ := cmd.Flags().GetBool("json")
 
 		if content == "" {
-			var err error
-			content, err = openEditor()
-			if err != nil {
-				return err
+			// Check if stdin has piped data
+			stat, _ := os.Stdin.Stat()
+			if (stat.Mode() & os.ModeCharDevice) == 0 {
+				data, err := io.ReadAll(os.Stdin)
+				if err != nil {
+					return fmt.Errorf("reading stdin: %w", err)
+				}
+				content = string(data)
+			} else {
+				var err error
+				content, err = openEditor()
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -81,6 +94,17 @@ Examples:
 
 		if err != nil {
 			return err
+		}
+
+		// Move to folder if specified
+		if cmd.Flags().Changed("folder") {
+			err = database.MoveNoteToFolder(ctx, db.MoveNoteToFolderParams{
+				FolderID: sql.NullInt64{Int64: folderID, Valid: true},
+				ID:       note.ID,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to assign folder: %w", err)
+			}
 		}
 
 		if tags != "" {
@@ -147,6 +171,7 @@ func init() {
 	addCmd.Flags().String("ttl", "", "Time-to-live duration (e.g., '24h', '7d')")
 	addCmd.Flags().String("source", "", "Source identifier (e.g., 'code-review', 'manual')")
 	addCmd.Flags().String("source-ref", "", "Source reference (e.g., 'main.go:50')")
+	addCmd.Flags().Int64("folder", 0, "Folder ID to add the note to")
 	addCmd.Flags().BoolP("json", "j", false, "Output as JSON")
 
 	_ = addCmd.MarkFlagRequired("title")

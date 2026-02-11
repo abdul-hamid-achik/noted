@@ -31,6 +31,11 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 
+		dbPath, _ := cmd.Flags().GetString("db")
+		if dbPath != "" {
+			cfg.DBPath = dbPath
+		}
+
 		conn, err = db.Open(cfg.DBPath)
 		if err != nil {
 			return err
@@ -56,10 +61,10 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	rootCmd.PersistentFlags().String("db", "", "Path to database file")
 }
 
-func outputJSON(v interface{}) error {
+func outputJSON(v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err

@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/abdul-hamid-achik/noted/internal/db"
@@ -20,7 +21,13 @@ type noteListItem struct {
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all notes",
-	Long:  "",
+	Long: `List all notes in your knowledge base, optionally filtered by tag.
+
+Examples:
+  noted list
+  noted list -n 50
+  noted list --tag work
+  noted list --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		limit, err := cmd.Flags().GetInt("limit")
 		if err != nil {
@@ -32,12 +39,15 @@ var listCmd = &cobra.Command{
 			return err
 		}
 
+		folderID, _ := cmd.Flags().GetInt64("folder")
 		asJSON, _ := cmd.Flags().GetBool("json")
 
 		ctx := context.Background()
 		var notes []db.Note
 
-		if tag != "" {
+		if cmd.Flags().Changed("folder") {
+			notes, err = database.GetNotesByFolder(ctx, sql.NullInt64{Int64: folderID, Valid: true})
+		} else if tag != "" {
 			notes, err = database.GetNotesByTagName(ctx, tag)
 		} else {
 			notes, err = database.ListNotes(ctx, db.ListNotesParams{
@@ -79,5 +89,6 @@ func init() {
 
 	listCmd.Flags().IntP("limit", "n", 20, "Max number of notes to show")
 	listCmd.Flags().StringP("tag", "T", "", "Filter by tag name")
+	listCmd.Flags().Int64("folder", 0, "Filter by folder ID")
 	listCmd.Flags().BoolP("json", "j", false, "Output as JSON")
 }
