@@ -120,11 +120,15 @@ tasks:
       - ./{{.BINARY_DIR}}/{{.BINARY_NAME}} {{.CLI_ARGS}}
 
   dev:web:
-    desc: Run Go backend + frontend dev server (for web development)
+    desc: Run Go backend + frontend dev server concurrently
     deps: [build:go]
     cmds:
-      - task: dev:web:backend
-      - task: web:dev
+      - |
+        ./{{.BINARY_DIR}}/{{.BINARY_NAME}} serve --port 3000 &
+        BACKEND_PID=$!
+        trap "kill $BACKEND_PID 2>/dev/null" EXIT
+        cd web && bun run dev
+    silent: false
 
   dev:web:backend:
     desc: Run the Go server in dev mode

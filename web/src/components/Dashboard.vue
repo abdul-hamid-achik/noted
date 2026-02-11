@@ -12,7 +12,7 @@ import {
   Legend,
 } from 'chart.js'
 import { useApi } from '../composables/useApi'
-import type { Stats, Note, Tag, Memory } from '../types'
+import type { Stats, Note, Tag } from '../types'
 
 ChartJS.register(ArcElement, BarElement, CategoryScale, LinearScale, Tooltip, Legend)
 
@@ -21,39 +21,29 @@ const router = useRouter()
 
 const stats = ref<Stats>({
   total_notes: 0,
-  total_memories: 0,
   total_tags: 0,
   db_size_bytes: 0,
+  db_size: '0 B',
   unsynced_notes: 0,
 })
 const tags = ref<Tag[]>([])
-const memories = ref<Memory[]>([])
 const recentNotes = ref<Note[]>([])
 const loading = ref(true)
 
 onMounted(async () => {
   try {
-    const [s, t, m, n] = await Promise.all([
+    const [s, t, n] = await Promise.all([
       api.getStats(),
       api.getTags(),
-      api.getMemories(),
       api.getNotes(),
     ])
     stats.value = s
     tags.value = t
-    memories.value = m
     recentNotes.value = n.slice(0, 10)
   } finally {
     loading.value = false
   }
 })
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
-}
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr)
@@ -84,26 +74,29 @@ const tagChartData = computed(() => ({
   ],
 }))
 
-const memoryCategories = computed(() => {
-  const counts = new Map<string, number>()
-  for (const m of memories.value) {
-    counts.set(m.category, (counts.get(m.category) || 0) + 1)
+// Note activity by day (last 7 days)
+const noteActivityData = computed(() => {
+  const days: string[] = []
+  const counts: number[] = []
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date()
+    d.setDate(d.getDate() - i)
+    const label = d.toLocaleDateString(undefined, { weekday: 'short' })
+    const dayStr = d.toISOString().split('T')[0]
+    days.push(label)
+    counts.push(recentNotes.value.filter((n) => n.updated_at.startsWith(dayStr)).length)
   }
-  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
-})
-
-const memoryChartData = computed(() => ({
-  labels: memoryCategories.value.map(([cat]) => cat),
-  datasets: [
-    {
-      label: 'Memories',
-      data: memoryCategories.value.map(([, count]) => count),
-      backgroundColor: memoryCategories.value.map((_, i) => chartColors[i % chartColors.length]),
+  return {
+    labels: days,
+    datasets: [{
+      label: 'Notes Updated',
+      data: counts,
+      backgroundColor: chartColors.slice(0, 7),
       borderWidth: 0,
       borderRadius: 4,
-    },
-  ],
-}))
+    }],
+  }
+})
 
 const chartOptions = {
   responsive: true,
@@ -183,16 +176,16 @@ function goToEditor() {
           <div class="text-2xl font-bold text-nord6">{{ stats.total_notes }}</div>
         </div>
         <div class="bg-nord1 rounded-lg p-4 border-l-4 border-nord7">
-          <div class="text-xs text-nord3 uppercase tracking-wider mb-1">Memories</div>
-          <div class="text-2xl font-bold text-nord6">{{ stats.total_memories }}</div>
+          <div class="text-xs text-nord3 uppercase tracking-wider mb-1">DB Size</div>
+          <div class="text-2xl font-bold text-nord6">{{ stats.db_size }}</div>
         </div>
         <div class="bg-nord1 rounded-lg p-4 border-l-4 border-nord9">
           <div class="text-xs text-nord3 uppercase tracking-wider mb-1">Tags</div>
           <div class="text-2xl font-bold text-nord6">{{ stats.total_tags }}</div>
         </div>
         <div class="bg-nord1 rounded-lg p-4 border-l-4 border-nord10">
-          <div class="text-xs text-nord3 uppercase tracking-wider mb-1">DB Size</div>
-          <div class="text-2xl font-bold text-nord6">{{ formatBytes(stats.db_size_bytes) }}</div>
+          <div class="text-xs text-nord3 uppercase tracking-wider mb-1">Unsynced</div>
+          <div class="text-2xl font-bold text-nord6">{{ stats.unsynced_notes }}</div>
         </div>
       </div>
 
@@ -209,14 +202,11 @@ function goToEditor() {
           </div>
         </div>
 
-        <!-- Memory categories -->
+        <!-- Note Activity -->
         <div class="bg-nord1 rounded-lg p-4">
-          <h2 class="text-sm font-medium text-nord6 mb-4">Memory Categories</h2>
-          <div v-if="memoryCategories.length > 0" class="h-64">
-            <Bar :data="memoryChartData" :options="barChartOptions" />
-          </div>
-          <div v-else class="h-64 flex items-center justify-center text-nord3 text-sm">
-            No memories yet
+          <h2 class="text-sm font-medium text-nord6 mb-4">Recent Activity</h2>
+          <div class="h-64">
+            <Bar :data="noteActivityData" :options="barChartOptions" />
           </div>
         </div>
       </div>

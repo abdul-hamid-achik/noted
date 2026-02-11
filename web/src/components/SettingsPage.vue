@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import type { SettingsInfo } from '../types'
@@ -14,14 +14,8 @@ const error = ref('')
 // Action states
 const vacuuming = ref(false)
 const checkpointing = ref(false)
-const deletingAll = ref(false)
-const resetting = ref(false)
 const actionMessage = ref('')
 const actionError = ref('')
-
-// Danger zone confirmations
-const deleteConfirmStep = ref(0) // 0=idle, 1=first confirm, 2=second confirm
-const resetConfirmStep = ref(0)
 
 onMounted(async () => {
   await loadSettings()
@@ -39,28 +33,6 @@ async function loadSettings() {
   }
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
-}
-
-function formatUptime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  return `${h}h ${m}m`
-}
-
-const searchSyncPercent = computed(() => {
-  if (!settings.value) return 100
-  const total = settings.value.search_indexed + settings.value.search_pending
-  if (total === 0) return 100
-  return Math.round((settings.value.search_indexed / total) * 100)
-})
-
 function clearActionMessages() {
   actionMessage.value = ''
   actionError.value = ''
@@ -71,7 +43,7 @@ async function handleVacuum() {
   vacuuming.value = true
   try {
     const result = await api.vacuumDB()
-    actionMessage.value = result.message
+    actionMessage.value = result.status === 'ok' ? 'Database vacuumed successfully' : 'Vacuum completed'
     await loadSettings()
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : 'Vacuum failed'
@@ -85,79 +57,13 @@ async function handleCheckpoint() {
   checkpointing.value = true
   try {
     const result = await api.walCheckpoint()
-    actionMessage.value = result.message
+    actionMessage.value = result.status === 'ok' ? 'WAL checkpoint completed' : 'Checkpoint completed'
     await loadSettings()
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : 'Checkpoint failed'
   } finally {
     checkpointing.value = false
   }
-}
-
-function initiateDeleteAll() {
-  clearActionMessages()
-  resetConfirmStep.value = 0
-  deleteConfirmStep.value = 1
-}
-
-function cancelDeleteAll() {
-  deleteConfirmStep.value = 0
-}
-
-async function confirmDeleteAll() {
-  if (deleteConfirmStep.value === 1) {
-    deleteConfirmStep.value = 2
-    return
-  }
-  clearActionMessages()
-  deletingAll.value = true
-  try {
-    const result = await api.deleteAllNotes()
-    actionMessage.value = result.message
-    deleteConfirmStep.value = 0
-    await loadSettings()
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Delete failed'
-  } finally {
-    deletingAll.value = false
-  }
-}
-
-function initiateReset() {
-  clearActionMessages()
-  deleteConfirmStep.value = 0
-  resetConfirmStep.value = 1
-}
-
-function cancelReset() {
-  resetConfirmStep.value = 0
-}
-
-async function confirmReset() {
-  if (resetConfirmStep.value === 1) {
-    resetConfirmStep.value = 2
-    return
-  }
-  clearActionMessages()
-  resetting.value = true
-  try {
-    const result = await api.resetDatabase()
-    actionMessage.value = result.message
-    resetConfirmStep.value = 0
-    await loadSettings()
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Reset failed'
-  } finally {
-    resetting.value = false
-  }
-}
-
-function goToDashboard() {
-  router.push('/dashboard')
-}
-
-function goToEditor() {
-  router.push('/')
 }
 </script>
 
@@ -171,13 +77,13 @@ function goToEditor() {
       </div>
       <div class="flex items-center gap-2">
         <button
-          @click="goToDashboard"
+          @click="router.push('/dashboard')"
           class="bg-nord2 hover:bg-nord3 text-nord6 text-sm font-medium py-1.5 px-4 rounded transition-colors"
         >
           Dashboard
         </button>
         <button
-          @click="goToEditor"
+          @click="router.push('/')"
           class="bg-nord10 hover:bg-nord9 text-nord6 text-sm font-medium py-1.5 px-4 rounded transition-colors"
         >
           Back to Editor
@@ -225,32 +131,28 @@ function goToEditor() {
         <h2 class="text-sm font-medium text-nord6 mb-4 uppercase tracking-wider">Database</h2>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <div class="text-xs text-nord3 mb-0.5">Path</div>
-            <div class="text-sm text-nord4 font-mono truncate" :title="settings.db_path">{{ settings.db_path }}</div>
-          </div>
-          <div>
-            <div class="text-xs text-nord3 mb-0.5">Size</div>
-            <div class="text-sm text-nord4">{{ formatBytes(settings.db_size_bytes) }}</div>
-          </div>
-          <div>
             <div class="text-xs text-nord3 mb-0.5">Journal Mode</div>
-            <div class="text-sm text-nord4 font-mono">{{ settings.journal_mode }}</div>
+            <div class="text-sm text-nord4 font-mono">{{ settings.db.journal_mode }}</div>
           </div>
           <div>
-            <div class="text-xs text-nord3 mb-0.5">SQLite Version</div>
-            <div class="text-sm text-nord4 font-mono">{{ settings.sqlite_version }}</div>
+            <div class="text-xs text-nord3 mb-0.5">Page Size</div>
+            <div class="text-sm text-nord4 font-mono">{{ settings.db.page_size }}</div>
           </div>
           <div>
-            <div class="text-xs text-nord3 mb-0.5">Notes</div>
-            <div class="text-sm text-nord4">{{ settings.total_notes }}</div>
+            <div class="text-xs text-nord3 mb-0.5">Cache Size</div>
+            <div class="text-sm text-nord4 font-mono">{{ settings.db.cache_size }}</div>
           </div>
           <div>
-            <div class="text-xs text-nord3 mb-0.5">Tags</div>
-            <div class="text-sm text-nord4">{{ settings.total_tags }}</div>
+            <div class="text-xs text-nord3 mb-0.5">Busy Timeout</div>
+            <div class="text-sm text-nord4 font-mono">{{ settings.db.busy_timeout }}ms</div>
           </div>
           <div>
-            <div class="text-xs text-nord3 mb-0.5">Memories</div>
-            <div class="text-sm text-nord4">{{ settings.total_memories }}</div>
+            <div class="text-xs text-nord3 mb-0.5">Foreign Keys</div>
+            <div class="text-sm text-nord4 font-mono">{{ settings.db.foreign_keys ? 'ON' : 'OFF' }}</div>
+          </div>
+          <div>
+            <div class="text-xs text-nord3 mb-0.5">WAL Pages</div>
+            <div class="text-sm text-nord4 font-mono">{{ settings.db.wal_pages }}</div>
           </div>
         </div>
 
@@ -283,167 +185,27 @@ function goToEditor() {
 
       <!-- Application Info -->
       <section class="bg-nord1 rounded-lg p-5">
-        <h2 class="text-sm font-medium text-nord6 mb-4 uppercase tracking-wider">Application</h2>
+        <h2 class="text-sm font-medium text-nord6 mb-4 uppercase tracking-wider">Runtime</h2>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <div class="text-xs text-nord3 mb-0.5">Version</div>
-            <div class="text-sm text-nord4 font-mono">{{ settings.app_version || 'dev' }}</div>
+            <div class="text-xs text-nord3 mb-0.5">App Version</div>
+            <div class="text-sm text-nord4 font-mono">{{ settings.app.version }}</div>
           </div>
           <div>
             <div class="text-xs text-nord3 mb-0.5">Go Version</div>
-            <div class="text-sm text-nord4 font-mono">{{ settings.go_version }}</div>
+            <div class="text-sm text-nord4 font-mono">{{ settings.runtime.go_version }}</div>
           </div>
           <div>
             <div class="text-xs text-nord3 mb-0.5">Platform</div>
-            <div class="text-sm text-nord4 font-mono">{{ settings.platform }}</div>
+            <div class="text-sm text-nord4 font-mono">{{ settings.runtime.goos }}/{{ settings.runtime.goarch }}</div>
           </div>
           <div>
-            <div class="text-xs text-nord3 mb-0.5">Uptime</div>
-            <div class="text-sm text-nord4">{{ formatUptime(settings.uptime_seconds) }}</div>
+            <div class="text-xs text-nord3 mb-0.5">Goroutines</div>
+            <div class="text-sm text-nord4 font-mono">{{ settings.runtime.num_goroutine }}</div>
           </div>
-        </div>
-      </section>
-
-      <!-- Search Index -->
-      <section class="bg-nord1 rounded-lg p-5">
-        <h2 class="text-sm font-medium text-nord6 mb-4 uppercase tracking-wider">Search Index</h2>
-        <div class="space-y-4">
           <div>
-            <div class="flex justify-between text-sm mb-1">
-              <span class="text-nord4">Embedding sync</span>
-              <span class="text-nord3">{{ searchSyncPercent }}%</span>
-            </div>
-            <div class="w-full bg-nord2 rounded-full h-2">
-              <div
-                class="h-2 rounded-full transition-all duration-500"
-                :class="searchSyncPercent === 100 ? 'bg-nord14' : 'bg-nord13'"
-                :style="{ width: `${searchSyncPercent}%` }"
-              />
-            </div>
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <div class="text-xs text-nord3">Indexed</div>
-              <div class="text-lg font-semibold text-nord14">{{ settings.search_indexed }}</div>
-            </div>
-            <div>
-              <div class="text-xs text-nord3">Pending</div>
-              <div class="text-lg font-semibold" :class="settings.search_pending > 0 ? 'text-nord13' : 'text-nord3'">
-                {{ settings.search_pending }}
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Danger Zone -->
-      <section class="bg-nord1 rounded-lg p-5 border border-nord11">
-        <h2 class="text-sm font-medium text-nord11 mb-4 uppercase tracking-wider">Danger Zone</h2>
-        <div class="space-y-4">
-          <!-- Delete All Notes -->
-          <div class="flex items-center justify-between py-3 border-b border-nord2">
-            <div>
-              <div class="text-sm text-nord4">Delete All Notes</div>
-              <div class="text-xs text-nord3">Permanently delete all notes and their tag associations.</div>
-            </div>
-            <div class="flex items-center gap-2 shrink-0 ml-4">
-              <template v-if="deleteConfirmStep === 0">
-                <button
-                  @click="initiateDeleteAll"
-                  class="bg-nord11 hover:brightness-110 text-nord6 text-sm py-1.5 px-4 rounded transition-all"
-                >
-                  Delete All Notes
-                </button>
-              </template>
-              <template v-else-if="deleteConfirmStep === 1">
-                <span class="text-xs text-nord13 mr-2">Are you sure?</span>
-                <button
-                  @click="confirmDeleteAll"
-                  class="bg-nord11 hover:brightness-110 text-nord6 text-sm py-1.5 px-4 rounded transition-all"
-                >
-                  Yes, Continue
-                </button>
-                <button
-                  @click="cancelDeleteAll"
-                  class="bg-nord2 hover:bg-nord3 text-nord4 text-sm py-1.5 px-3 rounded transition-colors"
-                >
-                  Cancel
-                </button>
-              </template>
-              <template v-else>
-                <span class="text-xs text-nord11 mr-2 font-bold">This cannot be undone!</span>
-                <button
-                  @click="confirmDeleteAll"
-                  :disabled="deletingAll"
-                  class="bg-nord11 hover:brightness-110 disabled:opacity-50 text-nord6 text-sm py-1.5 px-4 rounded transition-all flex items-center gap-2"
-                >
-                  <svg v-if="deletingAll" class="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  {{ deletingAll ? 'Deleting...' : 'CONFIRM DELETE ALL' }}
-                </button>
-                <button
-                  @click="cancelDeleteAll"
-                  class="bg-nord2 hover:bg-nord3 text-nord4 text-sm py-1.5 px-3 rounded transition-colors"
-                >
-                  Cancel
-                </button>
-              </template>
-            </div>
-          </div>
-
-          <!-- Reset Database -->
-          <div class="flex items-center justify-between py-3">
-            <div>
-              <div class="text-sm text-nord4">Reset Database</div>
-              <div class="text-xs text-nord3">Drop and recreate all tables. All data will be lost.</div>
-            </div>
-            <div class="flex items-center gap-2 shrink-0 ml-4">
-              <template v-if="resetConfirmStep === 0">
-                <button
-                  @click="initiateReset"
-                  class="bg-nord11 hover:brightness-110 text-nord6 text-sm py-1.5 px-4 rounded transition-all"
-                >
-                  Reset Database
-                </button>
-              </template>
-              <template v-else-if="resetConfirmStep === 1">
-                <span class="text-xs text-nord13 mr-2">Are you sure?</span>
-                <button
-                  @click="confirmReset"
-                  class="bg-nord11 hover:brightness-110 text-nord6 text-sm py-1.5 px-4 rounded transition-all"
-                >
-                  Yes, Continue
-                </button>
-                <button
-                  @click="cancelReset"
-                  class="bg-nord2 hover:bg-nord3 text-nord4 text-sm py-1.5 px-3 rounded transition-colors"
-                >
-                  Cancel
-                </button>
-              </template>
-              <template v-else>
-                <span class="text-xs text-nord11 mr-2 font-bold">ALL DATA WILL BE LOST!</span>
-                <button
-                  @click="confirmReset"
-                  :disabled="resetting"
-                  class="bg-nord11 hover:brightness-110 disabled:opacity-50 text-nord6 text-sm py-1.5 px-4 rounded transition-all flex items-center gap-2"
-                >
-                  <svg v-if="resetting" class="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  {{ resetting ? 'Resetting...' : 'CONFIRM FULL RESET' }}
-                </button>
-                <button
-                  @click="cancelReset"
-                  class="bg-nord2 hover:bg-nord3 text-nord4 text-sm py-1.5 px-3 rounded transition-colors"
-                >
-                  Cancel
-                </button>
-              </template>
-            </div>
+            <div class="text-xs text-nord3 mb-0.5">CPUs</div>
+            <div class="text-sm text-nord4 font-mono">{{ settings.runtime.num_cpu }}</div>
           </div>
         </div>
       </section>

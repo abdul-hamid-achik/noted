@@ -1,4 +1,16 @@
-import type { Note, NoteCreateRequest, NoteUpdateRequest, Tag, Memory, MemoryCreateRequest, Stats, SettingsInfo, ActionResult, Folder, FolderCreateRequest, FolderUpdateRequest } from '../types'
+import type {
+  Note,
+  NoteCreateRequest,
+  NoteUpdateRequest,
+  Tag,
+  Stats,
+  SettingsInfo,
+  ActionResult,
+  Folder,
+  FolderCreateRequest,
+  FolderUpdateRequest,
+  GraphData,
+} from '../types'
 
 const BASE = '/api'
 
@@ -54,28 +66,22 @@ export function useApi() {
     return request<Note[]>(`/notes/search?${params}`)
   }
 
-  // Memories
-  async function getMemories(): Promise<Memory[]> {
-    return request<Memory[]>('/memories')
+  async function pinNote(id: number): Promise<Note> {
+    return request<Note>(`/notes/${id}/pin`, { method: 'POST' })
   }
 
-  async function createMemory(data: MemoryCreateRequest): Promise<Memory> {
-    return request<Memory>('/memories', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    })
+  async function unpinNote(id: number): Promise<Note> {
+    return request<Note>(`/notes/${id}/pin`, { method: 'DELETE' })
   }
 
-  async function deleteMemory(id: number): Promise<void> {
-    return request<void>(`/memories/${id}`, {
-      method: 'DELETE',
-    })
+  // Backlinks
+  async function getBacklinks(id: number): Promise<Note[]> {
+    return request<Note[]>(`/notes/${id}/backlinks`)
   }
 
-  async function recallMemories(q: string, limit = 10, category?: string): Promise<Memory[]> {
-    const params = new URLSearchParams({ q, limit: String(limit) })
-    if (category) params.set('category', category)
-    return request<Memory[]>(`/memories/recall?${params}`)
+  // Graph
+  async function getGraph(): Promise<GraphData> {
+    return request<GraphData>('/graph')
   }
 
   // Tags
@@ -142,15 +148,7 @@ export function useApi() {
   }
 
   async function walCheckpoint(): Promise<ActionResult> {
-    return request<ActionResult>('/settings/checkpoint', { method: 'POST' })
-  }
-
-  async function deleteAllNotes(): Promise<ActionResult> {
-    return request<ActionResult>('/settings/delete-all-notes', { method: 'POST' })
-  }
-
-  async function resetDatabase(): Promise<ActionResult> {
-    return request<ActionResult>('/settings/reset', { method: 'POST' })
+    return request<ActionResult>('/settings/wal-checkpoint', { method: 'POST' })
   }
 
   return {
@@ -160,10 +158,10 @@ export function useApi() {
     updateNote,
     deleteNote,
     searchNotes,
-    getMemories,
-    createMemory,
-    deleteMemory,
-    recallMemories,
+    pinNote,
+    unpinNote,
+    getBacklinks,
+    getGraph,
     getTags,
     deleteTag,
     removeTagFromNote,
@@ -176,7 +174,5 @@ export function useApi() {
     getSettings,
     vacuumDB,
     walCheckpoint,
-    deleteAllNotes,
-    resetDatabase,
   }
 }

@@ -1,28 +1,37 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { useNotesStore } from '../stores/notes'
 import { useUiStore } from '../stores/ui'
 import type { Note } from '../types'
+import Fuse from 'fuse.js'
 
+const router = useRouter()
 const notesStore = useNotesStore()
 const uiStore = useUiStore()
 const query = ref('')
 const selectedIndex = ref(0)
 const inputRef = ref<HTMLInputElement | null>(null)
 
+const fuse = computed(() => new Fuse(notesStore.sortedNotes, {
+  keys: [
+    { name: 'title', weight: 2 },
+    { name: 'content', weight: 1 },
+    { name: 'tags.name', weight: 1.5 },
+  ],
+  threshold: 0.4,
+  includeScore: true,
+  includeMatches: true,
+}))
+
 const filteredNotes = computed(() => {
-  if (!query.value) return notesStore.sortedNotes
-  const q = query.value.toLowerCase()
-  return notesStore.sortedNotes.filter(
-    (n) =>
-      n.title.toLowerCase().includes(q) ||
-      n.content.toLowerCase().includes(q) ||
-      n.tags.some((t) => t.name.toLowerCase().includes(q))
-  )
+  if (!query.value) return notesStore.sortedNotes.slice(0, 30)
+  return fuse.value.search(query.value).slice(0, 30).map((r) => r.item)
 })
 
 function selectNote(note: Note) {
   notesStore.selectNote(note)
+  router.push(`/notes/${note.id}`)
   uiStore.closeFuzzyFinder()
 }
 
@@ -57,6 +66,15 @@ function handleOverlayClick(e: MouseEvent) {
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr)
+  const now = new Date()
+  const diff = now.getTime() - d.getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  if (days < 7) return `${days}d ago`
   return d.toLocaleDateString()
 }
 
@@ -83,7 +101,7 @@ onUnmounted(() => {
           ref="inputRef"
           v-model="query"
           type="text"
-          placeholder="Search notes..."
+          placeholder="Search notes... (fuzzy match)"
           class="w-full bg-nord0 text-nord4 border border-nord3 rounded px-3 py-2 text-sm focus:outline-none focus:border-nord8 placeholder-nord3 font-mono"
         />
       </div>
@@ -104,8 +122,11 @@ onUnmounted(() => {
           :class="index === selectedIndex ? 'bg-nord2' : 'hover:bg-nord0'"
         >
           <div class="flex items-center justify-between">
-            <span class="text-sm font-medium text-nord6">{{ note.title }}</span>
-            <span class="text-xs text-nord3 ml-2">{{ formatDate(note.updated_at) }}</span>
+            <div class="flex items-center gap-2 min-w-0">
+              <span v-if="note.pinned" class="text-nord13 text-xs shrink-0" title="Pinned">*</span>
+              <span class="text-sm font-medium text-nord6 truncate">{{ note.title }}</span>
+            </div>
+            <span class="text-xs text-nord3 ml-2 shrink-0">{{ formatDate(note.updated_at) }}</span>
           </div>
           <div class="flex items-center gap-1 mt-0.5">
             <span

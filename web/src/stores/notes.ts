@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useApi } from '../composables/useApi'
-import type { Note, NoteCreateRequest, NoteUpdateRequest, Tag, Memory, Folder, FolderCreateRequest, FolderUpdateRequest } from '../types'
+import type { Note, NoteCreateRequest, NoteUpdateRequest, Tag, Folder, FolderCreateRequest, FolderUpdateRequest } from '../types'
 
 export const useNotesStore = defineStore('notes', () => {
   const api = useApi()
@@ -10,7 +10,6 @@ export const useNotesStore = defineStore('notes', () => {
   const notes = ref<Note[]>([])
   const currentNote = ref<Note | null>(null)
   const tags = ref<Tag[]>([])
-  const memories = ref<Memory[]>([])
   const folders = ref<Folder[]>([])
   const currentFolder = ref<number | null>(null) // null = All Notes
   const searchResults = ref<Note[]>([])
@@ -18,9 +17,15 @@ export const useNotesStore = defineStore('notes', () => {
 
   // Getters
   const sortedNotes = computed(() => {
-    return [...notes.value].sort(
+    const sorted = [...notes.value].sort(
       (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
     )
+    // Pinned notes first
+    return sorted.sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1
+      if (!a.pinned && b.pinned) return 1
+      return 0
+    })
   })
 
   const recentNotes = computed(() => sortedNotes.value.slice(0, 10))
@@ -31,7 +36,6 @@ export const useNotesStore = defineStore('notes', () => {
   })
 
   const folderTree = computed(() => {
-    // Build a tree structure from flat folders list
     type FolderNode = Folder & { children: FolderNode[] }
     const rootFolders: FolderNode[] = []
     const childMap = new Map<number, FolderNode[]>()
@@ -47,7 +51,6 @@ export const useNotesStore = defineStore('notes', () => {
       }
     }
 
-    // Attach children
     function attachChildren(nodes: FolderNode[]) {
       for (const node of nodes) {
         node.children = childMap.get(node.id) || []
@@ -100,7 +103,7 @@ export const useNotesStore = defineStore('notes', () => {
     const updated = await api.updateNote(id, data)
     const idx = notes.value.findIndex((n) => n.id === id)
     if (idx !== -1) {
-      notes.value[idx] = updated
+      notes.value.splice(idx, 1, updated)
     }
     if (currentNote.value?.id === id) {
       currentNote.value = updated
@@ -116,10 +119,31 @@ export const useNotesStore = defineStore('notes', () => {
     }
   }
 
+  async function pinNote(id: number) {
+    const updated = await api.pinNote(id)
+    const idx = notes.value.findIndex((n) => n.id === id)
+    if (idx !== -1) {
+      notes.value.splice(idx, 1, updated)
+    }
+    if (currentNote.value?.id === id) {
+      currentNote.value = updated
+    }
+  }
+
+  async function unpinNote(id: number) {
+    const updated = await api.unpinNote(id)
+    const idx = notes.value.findIndex((n) => n.id === id)
+    if (idx !== -1) {
+      notes.value.splice(idx, 1, updated)
+    }
+    if (currentNote.value?.id === id) {
+      currentNote.value = updated
+    }
+  }
+
   async function deleteTag(id: number) {
     await api.deleteTag(id)
     tags.value = tags.value.filter((t) => t.id !== id)
-    // Remove this tag from all notes in local state
     for (const note of notes.value) {
       note.tags = note.tags.filter((t) => t.id !== id)
     }
@@ -135,10 +159,10 @@ export const useNotesStore = defineStore('notes', () => {
     await api.removeTagFromNote(tagId, noteId)
     const idx = notes.value.findIndex((n) => n.id === noteId)
     if (idx !== -1) {
-      notes.value[idx] = {
+      notes.value.splice(idx, 1, {
         ...notes.value[idx],
         tags: notes.value[idx].tags.filter((t) => t.id !== tagId),
-      }
+      })
     }
     if (currentNote.value?.id === noteId) {
       currentNote.value = {
@@ -146,7 +170,6 @@ export const useNotesStore = defineStore('notes', () => {
         tags: currentNote.value.tags.filter((t) => t.id !== tagId),
       }
     }
-    // Refresh tags to update counts
     await fetchTags()
   }
 
@@ -163,25 +186,11 @@ export const useNotesStore = defineStore('notes', () => {
     tags.value = await api.getTags()
   }
 
-  async function fetchMemories() {
-    memories.value = await api.getMemories()
-  }
-
-  async function recallMemories(query: string, limit = 10, category?: string) {
-    loading.value = true
-    try {
-      memories.value = await api.recallMemories(query, limit, category)
-    } finally {
-      loading.value = false
-    }
-  }
-
   // Folder actions
   async function fetchFolders() {
     try {
       folders.value = await api.getFolders()
     } catch {
-      // Folders API may not be available yet
       folders.value = []
     }
   }
@@ -196,7 +205,7 @@ export const useNotesStore = defineStore('notes', () => {
     const updated = await api.updateFolder(id, data)
     const idx = folders.value.findIndex((f) => f.id === id)
     if (idx !== -1) {
-      folders.value[idx] = updated
+      folders.value.splice(idx, 1, updated)
     }
     return updated
   }
@@ -207,7 +216,6 @@ export const useNotesStore = defineStore('notes', () => {
     if (currentFolder.value === id) {
       currentFolder.value = null
     }
-    // Notes in deleted folder move to root (server handles this)
     for (const note of notes.value) {
       if (note.folder_id === id) {
         note.folder_id = null
@@ -219,12 +227,11 @@ export const useNotesStore = defineStore('notes', () => {
     const updated = await api.moveNoteToFolder(noteId, folderId)
     const idx = notes.value.findIndex((n) => n.id === noteId)
     if (idx !== -1) {
-      notes.value[idx] = updated
+      notes.value.splice(idx, 1, updated)
     }
     if (currentNote.value?.id === noteId) {
       currentNote.value = updated
     }
-    // Refresh folders to update note counts
     await fetchFolders()
     return updated
   }
@@ -237,7 +244,7 @@ export const useNotesStore = defineStore('notes', () => {
     currentNote.value = note
   }
 
-  function handleWsEvent(type: string, data: unknown) {
+  function handleSSEEvent(type: string, data: unknown) {
     switch (type) {
       case 'note_created': {
         const note = data as Note
@@ -248,7 +255,7 @@ export const useNotesStore = defineStore('notes', () => {
       case 'note_updated': {
         const note = data as Note
         const idx = notes.value.findIndex((n) => n.id === note.id)
-        if (idx !== -1) notes.value[idx] = note
+        if (idx !== -1) notes.value.splice(idx, 1, note)
         if (currentNote.value?.id === note.id) currentNote.value = note
         break
       }
@@ -258,6 +265,23 @@ export const useNotesStore = defineStore('notes', () => {
         if (currentNote.value?.id === id) currentNote.value = null
         break
       }
+      case 'folder_created': {
+        const folder = data as Folder
+        const exists = folders.value.find((f) => f.id === folder.id)
+        if (!exists) folders.value.push(folder)
+        break
+      }
+      case 'folder_updated': {
+        const folder = data as Folder
+        const idx = folders.value.findIndex((f) => f.id === folder.id)
+        if (idx !== -1) folders.value.splice(idx, 1, folder)
+        break
+      }
+      case 'folder_deleted': {
+        const { id } = data as { id: number }
+        folders.value = folders.value.filter((f) => f.id !== id)
+        break
+      }
     }
   }
 
@@ -265,7 +289,6 @@ export const useNotesStore = defineStore('notes', () => {
     notes,
     currentNote,
     tags,
-    memories,
     folders,
     currentFolder,
     searchResults,
@@ -280,12 +303,12 @@ export const useNotesStore = defineStore('notes', () => {
     createNote,
     updateNote,
     deleteNote,
+    pinNote,
+    unpinNote,
     deleteTag,
     removeTagFromNote,
     searchNotes,
     fetchTags,
-    fetchMemories,
-    recallMemories,
     fetchFolders,
     createFolder,
     updateFolder,
@@ -293,6 +316,6 @@ export const useNotesStore = defineStore('notes', () => {
     moveNoteToFolder,
     selectFolder,
     selectNote,
-    handleWsEvent,
+    handleSSEEvent,
   }
 })

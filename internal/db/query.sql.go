@@ -28,6 +28,30 @@ func (q *Queries) AddTagToNote(ctx context.Context, arg AddTagToNoteParams) erro
 	return err
 }
 
+const countNotes = `-- name: CountNotes :one
+
+SELECT COUNT(*) FROM notes
+`
+
+// Count queries (avoid loading all rows)
+func (q *Queries) CountNotes(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countNotes)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countTags = `-- name: CountTags :one
+SELECT COUNT(*) FROM tags
+`
+
+func (q *Queries) CountTags(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTags)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createFolder = `-- name: CreateFolder :one
 
 INSERT INTO folders (name, parent_id)
@@ -57,7 +81,7 @@ func (q *Queries) CreateFolder(ctx context.Context, arg CreateFolderParams) (Fol
 const createNote = `-- name: CreateNote :one
 INSERT INTO notes (title, content)
 VALUES (?, ?)
-RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id
+RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at
 `
 
 type CreateNoteParams struct {
@@ -79,14 +103,35 @@ func (q *Queries) CreateNote(ctx context.Context, arg CreateNoteParams) (Note, e
 		&i.Source,
 		&i.SourceRef,
 		&i.FolderID,
+		&i.Pinned,
+		&i.PinnedAt,
 	)
 	return i, err
+}
+
+const createNoteLink = `-- name: CreateNoteLink :exec
+
+INSERT INTO note_links (source_note_id, target_note_id, link_text)
+VALUES (?, ?, ?)
+ON CONFLICT DO NOTHING
+`
+
+type CreateNoteLinkParams struct {
+	SourceNoteID int64  `json:"source_note_id"`
+	TargetNoteID int64  `json:"target_note_id"`
+	LinkText     string `json:"link_text"`
+}
+
+// Note links (wikilinks / bidirectional linking)
+func (q *Queries) CreateNoteLink(ctx context.Context, arg CreateNoteLinkParams) error {
+	_, err := q.db.ExecContext(ctx, createNoteLink, arg.SourceNoteID, arg.TargetNoteID, arg.LinkText)
+	return err
 }
 
 const createNoteWithTTL = `-- name: CreateNoteWithTTL :one
 INSERT INTO notes (title, content, expires_at, source, source_ref)
 VALUES (?, ?, ?, ?, ?)
-RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id
+RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at
 `
 
 type CreateNoteWithTTLParams struct {
@@ -117,6 +162,8 @@ func (q *Queries) CreateNoteWithTTL(ctx context.Context, arg CreateNoteWithTTLPa
 		&i.Source,
 		&i.SourceRef,
 		&i.FolderID,
+		&i.Pinned,
+		&i.PinnedAt,
 	)
 	return i, err
 }
@@ -164,6 +211,15 @@ func (q *Queries) DeleteNote(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteNoteLinks = `-- name: DeleteNoteLinks :exec
+DELETE FROM note_links WHERE source_note_id = ?
+`
+
+func (q *Queries) DeleteNoteLinks(ctx context.Context, sourceNoteID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteNoteLinks, sourceNoteID)
+	return err
+}
+
 const deleteTag = `-- name: DeleteTag :exec
 DELETE FROM tags
 WHERE id = ?
@@ -187,8 +243,41 @@ func (q *Queries) DeleteUnusedTags(ctx context.Context) (int64, error) {
 	return result.RowsAffected()
 }
 
+const getAllNoteLinks = `-- name: GetAllNoteLinks :many
+SELECT id, source_note_id, target_note_id, link_text, created_at FROM note_links
+`
+
+func (q *Queries) GetAllNoteLinks(ctx context.Context) ([]NoteLink, error) {
+	rows, err := q.db.QueryContext(ctx, getAllNoteLinks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NoteLink{}
+	for rows.Next() {
+		var i NoteLink
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceNoteID,
+			&i.TargetNoteID,
+			&i.LinkText,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAllNotes = `-- name: GetAllNotes :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes ORDER BY created_at DESC
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at FROM notes ORDER BY created_at DESC
 `
 
 func (q *Queries) GetAllNotes(ctx context.Context) ([]Note, error) {
@@ -211,6 +300,51 @@ func (q *Queries) GetAllNotes(ctx context.Context) ([]Note, error) {
 			&i.Source,
 			&i.SourceRef,
 			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getBacklinks = `-- name: GetBacklinks :many
+SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced, n.expires_at, n.source, n.source_ref, n.folder_id, n.pinned, n.pinned_at FROM notes n
+INNER JOIN note_links nl ON n.id = nl.source_note_id
+WHERE nl.target_note_id = ?
+ORDER BY n.updated_at DESC
+`
+
+func (q *Queries) GetBacklinks(ctx context.Context, targetNoteID int64) ([]Note, error) {
+	rows, err := q.db.QueryContext(ctx, getBacklinks, targetNoteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Note{}
+	for rows.Next() {
+		var i Note
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
+			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -226,7 +360,7 @@ func (q *Queries) GetAllNotes(ctx context.Context) ([]Note, error) {
 }
 
 const getExpiredNotes = `-- name: GetExpiredNotes :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes WHERE expires_at IS NOT NULL AND expires_at < datetime('now')
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at FROM notes WHERE expires_at IS NOT NULL AND expires_at < datetime('now')
 `
 
 func (q *Queries) GetExpiredNotes(ctx context.Context) ([]Note, error) {
@@ -249,6 +383,8 @@ func (q *Queries) GetExpiredNotes(ctx context.Context) ([]Note, error) {
 			&i.Source,
 			&i.SourceRef,
 			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -281,7 +417,7 @@ func (q *Queries) GetFolder(ctx context.Context, id int64) (Folder, error) {
 }
 
 const getNote = `-- name: GetNote :one
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at FROM notes
 WHERE id = ?
 `
 
@@ -299,12 +435,38 @@ func (q *Queries) GetNote(ctx context.Context, id int64) (Note, error) {
 		&i.Source,
 		&i.SourceRef,
 		&i.FolderID,
+		&i.Pinned,
+		&i.PinnedAt,
+	)
+	return i, err
+}
+
+const getNoteByTitle = `-- name: GetNoteByTitle :one
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at FROM notes WHERE title = ? LIMIT 1
+`
+
+func (q *Queries) GetNoteByTitle(ctx context.Context, title string) (Note, error) {
+	row := q.db.QueryRowContext(ctx, getNoteByTitle, title)
+	var i Note
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Content,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EmbeddingSynced,
+		&i.ExpiresAt,
+		&i.Source,
+		&i.SourceRef,
+		&i.FolderID,
+		&i.Pinned,
+		&i.PinnedAt,
 	)
 	return i, err
 }
 
 const getNotesByFolder = `-- name: GetNotesByFolder :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at FROM notes
 WHERE folder_id = ?
 ORDER BY created_at DESC
 `
@@ -329,6 +491,8 @@ func (q *Queries) GetNotesByFolder(ctx context.Context, folderID sql.NullInt64) 
 			&i.Source,
 			&i.SourceRef,
 			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -344,7 +508,7 @@ func (q *Queries) GetNotesByFolder(ctx context.Context, folderID sql.NullInt64) 
 }
 
 const getNotesByTagName = `-- name: GetNotesByTagName :many
-SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced, n.expires_at, n.source, n.source_ref, n.folder_id FROM notes n
+SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced, n.expires_at, n.source, n.source_ref, n.folder_id, n.pinned, n.pinned_at FROM notes n
 INNER JOIN note_tags nt ON n.id = nt.note_id
 INNER JOIN tags t ON nt.tag_id = t.id
 WHERE t.name = ?
@@ -371,6 +535,8 @@ func (q *Queries) GetNotesByTagName(ctx context.Context, name string) ([]Note, e
 			&i.Source,
 			&i.SourceRef,
 			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -386,7 +552,7 @@ func (q *Queries) GetNotesByTagName(ctx context.Context, name string) ([]Note, e
 }
 
 const getNotesForTag = `-- name: GetNotesForTag :many
-SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced, n.expires_at, n.source, n.source_ref, n.folder_id FROM notes n
+SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced, n.expires_at, n.source, n.source_ref, n.folder_id, n.pinned, n.pinned_at FROM notes n
 INNER JOIN note_tags nt ON n.id = nt.note_id
 WHERE nt.tag_id = ?
 ORDER BY n.created_at DESC
@@ -412,6 +578,8 @@ func (q *Queries) GetNotesForTag(ctx context.Context, tagID int64) ([]Note, erro
 			&i.Source,
 			&i.SourceRef,
 			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -427,7 +595,7 @@ func (q *Queries) GetNotesForTag(ctx context.Context, tagID int64) ([]Note, erro
 }
 
 const getNotesSince = `-- name: GetNotesSince :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes WHERE created_at >= ? ORDER BY created_at DESC
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at FROM notes WHERE created_at >= ? ORDER BY created_at DESC
 `
 
 func (q *Queries) GetNotesSince(ctx context.Context, createdAt sql.NullTime) ([]Note, error) {
@@ -450,6 +618,8 @@ func (q *Queries) GetNotesSince(ctx context.Context, createdAt sql.NullTime) ([]
 			&i.Source,
 			&i.SourceRef,
 			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -465,7 +635,7 @@ func (q *Queries) GetNotesSince(ctx context.Context, createdAt sql.NullTime) ([]
 }
 
 const getNotesWithoutFolder = `-- name: GetNotesWithoutFolder :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at FROM notes
 WHERE folder_id IS NULL
 ORDER BY created_at DESC
 `
@@ -490,6 +660,91 @@ func (q *Queries) GetNotesWithoutFolder(ctx context.Context) ([]Note, error) {
 			&i.Source,
 			&i.SourceRef,
 			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getOutlinks = `-- name: GetOutlinks :many
+SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.embedding_synced, n.expires_at, n.source, n.source_ref, n.folder_id, n.pinned, n.pinned_at FROM notes n
+INNER JOIN note_links nl ON n.id = nl.target_note_id
+WHERE nl.source_note_id = ?
+ORDER BY n.title
+`
+
+func (q *Queries) GetOutlinks(ctx context.Context, sourceNoteID int64) ([]Note, error) {
+	rows, err := q.db.QueryContext(ctx, getOutlinks, sourceNoteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Note{}
+	for rows.Next() {
+		var i Note
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
+			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getPinnedNotes = `-- name: GetPinnedNotes :many
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at FROM notes WHERE pinned = TRUE ORDER BY pinned_at DESC
+`
+
+func (q *Queries) GetPinnedNotes(ctx context.Context) ([]Note, error) {
+	rows, err := q.db.QueryContext(ctx, getPinnedNotes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Note{}
+	for rows.Next() {
+		var i Note
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EmbeddingSynced,
+			&i.ExpiresAt,
+			&i.Source,
+			&i.SourceRef,
+			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -595,7 +850,7 @@ func (q *Queries) GetTagsWithCount(ctx context.Context) ([]GetTagsWithCountRow, 
 }
 
 const getUnsynced = `-- name: GetUnsynced :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at FROM notes
 WHERE embedding_synced = FALSE
 `
 
@@ -619,6 +874,8 @@ func (q *Queries) GetUnsynced(ctx context.Context) ([]Note, error) {
 			&i.Source,
 			&i.SourceRef,
 			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -667,7 +924,7 @@ func (q *Queries) ListFolders(ctx context.Context) ([]Folder, error) {
 }
 
 const listNotes = `-- name: ListNotes :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at FROM notes
 ORDER BY created_at DESC
 LIMIT ? OFFSET ?
 `
@@ -697,6 +954,8 @@ func (q *Queries) ListNotes(ctx context.Context, arg ListNotesParams) ([]Note, e
 			&i.Source,
 			&i.SourceRef,
 			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -766,6 +1025,17 @@ func (q *Queries) MoveNoteToFolder(ctx context.Context, arg MoveNoteToFolderPara
 	return err
 }
 
+const pinNote = `-- name: PinNote :exec
+
+UPDATE notes SET pinned = TRUE, pinned_at = CURRENT_TIMESTAMP WHERE id = ?
+`
+
+// Pin/star support
+func (q *Queries) PinNote(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, pinNote, id)
+	return err
+}
+
 const removeAllTagsFromNote = `-- name: RemoveAllTagsFromNote :exec
 DELETE FROM note_tags WHERE note_id = ?
 `
@@ -791,7 +1061,7 @@ func (q *Queries) RemoveTagFromNote(ctx context.Context, arg RemoveTagFromNotePa
 }
 
 const searchNotesByTitle = `-- name: SearchNotesByTitle :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at FROM notes
 WHERE title LIKE ?
 ORDER BY created_at DESC
 `
@@ -816,6 +1086,8 @@ func (q *Queries) SearchNotesByTitle(ctx context.Context, title string) ([]Note,
 			&i.Source,
 			&i.SourceRef,
 			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -831,7 +1103,7 @@ func (q *Queries) SearchNotesByTitle(ctx context.Context, title string) ([]Note,
 }
 
 const searchNotesContent = `-- name: SearchNotesContent :many
-SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id FROM notes
+SELECT id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at FROM notes
 WHERE content LIKE ? OR title LIKE ?
 ORDER BY updated_at DESC
 LIMIT ?
@@ -863,6 +1135,8 @@ func (q *Queries) SearchNotesContent(ctx context.Context, arg SearchNotesContent
 			&i.Source,
 			&i.SourceRef,
 			&i.FolderID,
+			&i.Pinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -875,6 +1149,15 @@ func (q *Queries) SearchNotesContent(ctx context.Context, arg SearchNotesContent
 		return nil, err
 	}
 	return items, nil
+}
+
+const unpinNote = `-- name: UnpinNote :exec
+UPDATE notes SET pinned = FALSE, pinned_at = NULL WHERE id = ?
+`
+
+func (q *Queries) UnpinNote(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, unpinNote, id)
+	return err
 }
 
 const updateFolder = `-- name: UpdateFolder :one
@@ -907,7 +1190,7 @@ const updateNote = `-- name: UpdateNote :one
 UPDATE notes
 SET title = ?, content = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id
+RETURNING id, title, content, created_at, updated_at, embedding_synced, expires_at, source, source_ref, folder_id, pinned, pinned_at
 `
 
 type UpdateNoteParams struct {
@@ -930,6 +1213,8 @@ func (q *Queries) UpdateNote(ctx context.Context, arg UpdateNoteParams) (Note, e
 		&i.Source,
 		&i.SourceRef,
 		&i.FolderID,
+		&i.Pinned,
+		&i.PinnedAt,
 	)
 	return i, err
 }

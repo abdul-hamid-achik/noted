@@ -4,12 +4,22 @@ export interface Note {
   content: string
   tags: Tag[]
   folder_id?: number | null
+  pinned?: boolean
+  pinned_at?: string | null
   created_at: string
   updated_at: string
   expires_at?: string
   source?: string
   source_ref?: string
   embedding_synced?: boolean
+}
+
+export interface NoteLink {
+  id: number
+  source_note_id: number
+  target_note_id: number
+  link_text: string
+  created_at: string
 }
 
 export interface Folder {
@@ -37,26 +47,12 @@ export interface Tag {
   note_count?: number
 }
 
-export interface Memory {
-  id: number
-  title: string
-  content: string
-  category: string
-  importance: number
-  source?: string
-  source_ref?: string
-  expires_at?: string
-  created_at: string
-  updated_at: string
-  score?: number
-}
-
 export interface Stats {
   total_notes: number
-  total_memories: number
   total_tags: number
-  db_size_bytes: number
   unsynced_notes: number
+  db_size_bytes: number
+  db_size: string
 }
 
 export interface NoteCreateRequest {
@@ -72,39 +68,51 @@ export interface NoteUpdateRequest {
   tags?: string[]
 }
 
-export interface MemoryCreateRequest {
-  title: string
-  content: string
-  category: string
-  importance?: number
-  source?: string
-  source_ref?: string
-  expires_at?: string
-}
-
 export interface SettingsInfo {
-  db_path: string
-  db_size_bytes: number
-  db_size: string
-  journal_mode: string
-  sqlite_version: string
-  total_notes: number
-  total_tags: number
-  total_memories: number
-  app_version: string
-  go_version: string
-  platform: string
-  uptime_seconds: number
-  search_indexed: number
-  search_pending: number
+  db: {
+    journal_mode: string
+    page_size: number
+    cache_size: number
+    busy_timeout: number
+    foreign_keys: boolean
+    wal_pages: number
+  }
+  runtime: {
+    goos: string
+    goarch: string
+    num_goroutine: number
+    num_cpu: number
+    go_version: string
+  }
+  app: {
+    version: string
+  }
 }
 
 export interface ActionResult {
-  success: boolean
-  message: string
+  status: string
+  [key: string]: unknown
 }
 
-export interface WebSocketEvent {
-  type: 'note_created' | 'note_updated' | 'note_deleted' | 'memory_created' | 'memory_deleted'
+export interface GraphData {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
+export interface GraphNode {
+  id: number
+  title: string
+  folder_id?: number | null
+  link_count: number
+}
+
+export interface GraphEdge {
+  source: number
+  target: number
+  label: string
+}
+
+export interface SSEEvent {
+  type: string
   data: unknown
 }

@@ -27,6 +27,16 @@ type Note struct {
 	Source          sql.NullString `json:"source"`
 	SourceRef       sql.NullString `json:"source_ref"`
 	FolderID        sql.NullInt64  `json:"folder_id"`
+	Pinned          sql.NullBool   `json:"pinned"`
+	PinnedAt        sql.NullTime   `json:"pinned_at"`
+}
+
+type NoteLink struct {
+	ID           int64        `json:"id"`
+	SourceNoteID int64        `json:"source_note_id"`
+	TargetNoteID int64        `json:"target_note_id"`
+	LinkText     string       `json:"link_text"`
+	CreatedAt    sql.NullTime `json:"created_at"`
 }
 
 type NoteTag struct {

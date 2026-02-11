@@ -168,3 +168,23 @@ body {
   max-width: 100%;
   border-radius: 6px;
 }
+
+/* Wikilink styles */
+.prose-nord .wikilink {
+  color: #B48EAD;
+  text-decoration: none;
+  border-bottom: 1px dashed #B48EAD;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.prose-nord .wikilink:hover {
+  color: #ECEFF4;
+  border-bottom-color: #ECEFF4;
+}
+
+/* Task list checkboxes in markdown */
+.prose-nord input[type="checkbox"] {
+  accent-color: #88C0D0;
+  margin-right: 0.5rem;
+}

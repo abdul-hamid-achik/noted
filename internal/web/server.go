@@ -16,8 +16,12 @@ import (
 	"syscall"
 	"time"
 
+	"regexp"
+
 	"github.com/abdul-hamid-achik/noted/internal/db"
 )
+
+var wikilinkRegex = regexp.MustCompile(`\[\[([^\]]+)\]\]`)
 
 // Server is the HTTP server for the noted web interface.
 type Server struct {
@@ -41,6 +45,8 @@ type NoteResponse struct {
 	Content   string     `json:"content"`
 	Tags      []db.Tag   `json:"tags"`
 	FolderID  *int64     `json:"folder_id,omitempty"`
+	Pinned    bool       `json:"pinned"`
+	PinnedAt  *time.Time `json:"pinned_at,omitempty"`
 	CreatedAt *time.Time `json:"created_at"`
 	UpdatedAt *time.Time `json:"updated_at"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -132,6 +138,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/tags", s.handleTags)
 	mux.HandleFunc("/api/folders/", s.handleFolderByID)
 	mux.HandleFunc("/api/folders", s.handleFolders)
+	mux.HandleFunc("/api/graph", s.handleGraph)
 	mux.HandleFunc("/api/settings/vacuum", s.handleVacuum)
 	mux.HandleFunc("/api/settings/wal-checkpoint", s.handleWALCheckpoint)
 	mux.HandleFunc("/api/settings", s.handleSettings)
@@ -212,6 +219,7 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
 }
 
 func (s *Server) readJSON(r *http.Request, v any) error {
+	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20) // 1MB limit
 	defer r.Body.Close()
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -230,9 +238,13 @@ func noteToResponse(n db.Note, tags []db.Tag) NoteResponse {
 		Title:   n.Title,
 		Content: n.Content,
 		Tags:    tags,
+		Pinned:  n.Pinned.Valid && n.Pinned.Bool,
 	}
 	if n.FolderID.Valid {
 		resp.FolderID = &n.FolderID.Int64
+	}
+	if n.PinnedAt.Valid {
+		resp.PinnedAt = &n.PinnedAt.Time
 	}
 	if n.CreatedAt.Valid {
 		resp.CreatedAt = &n.CreatedAt.Time
@@ -461,6 +473,9 @@ func (s *Server) handleCreateNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse and sync wikilinks
+	s.syncNoteLinks(ctx, note.ID, req.Content)
+
 	resp, err := s.noteWithTags(ctx, note)
 	if err != nil {
 		s.logger.Error("failed to get tags", "error", err)
@@ -529,6 +544,9 @@ func (s *Server) handleUpdateNote(w http.ResponseWriter, r *http.Request, id int
 		s.writeError(w, http.StatusInternalServerError, "failed to update tags")
 		return
 	}
+
+	// Parse and sync wikilinks
+	s.syncNoteLinks(ctx, note.ID, req.Content)
 
 	resp, err := s.noteWithTags(ctx, note)
 	if err != nil {
@@ -717,14 +735,14 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	allNotes, err := s.queries.GetAllNotes(ctx)
+	noteCount, err := s.queries.CountNotes(ctx)
 	if err != nil {
 		s.logger.Error("failed to count notes", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "failed to get stats")
 		return
 	}
 
-	allTags, err := s.queries.ListTags(ctx)
+	tagCount, err := s.queries.CountTags(ctx)
 	if err != nil {
 		s.logger.Error("failed to count tags", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "failed to get stats")
@@ -751,8 +769,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stats := Stats{
-		TotalNotes:    int64(len(allNotes)),
-		TotalTags:     int64(len(allTags)),
+		TotalNotes:    noteCount,
+		TotalTags:     tagCount,
 		UnsyncedNotes: int64(len(unsynced)),
 		DBSizeBytes:   dbSize,
 		DBSize:        formatBytes(dbSize),
@@ -993,6 +1011,29 @@ func (s *Server) handleNoteByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for /api/notes/{id}/backlinks
+	if len(parts) == 2 && parts[1] == "backlinks" {
+		if r.Method != http.MethodGet {
+			s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleBacklinks(w, r, id)
+		return
+	}
+
+	// Check for /api/notes/{id}/pin
+	if len(parts) == 2 && parts[1] == "pin" {
+		switch r.Method {
+		case http.MethodPost:
+			s.handlePinNote(w, r, id)
+		case http.MethodDelete:
+			s.handleUnpinNote(w, r, id)
+		default:
+			s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		s.handleGetNote(w, r, id)
@@ -1179,5 +1220,197 @@ func (s *Server) handleWALCheckpoint(w http.ResponseWriter, r *http.Request) {
 		"total":        total,
 		"checkpointed": checkpointed,
 	})
+}
+
+// --- Wikilink parsing ---
+
+// parseWikilinks extracts [[link text]] from markdown content
+func parseWikilinks(content string) []string {
+	matches := wikilinkRegex.FindAllStringSubmatch(content, -1)
+	seen := make(map[string]bool)
+	var links []string
+	for _, m := range matches {
+		text := strings.TrimSpace(m[1])
+		if text != "" && !seen[text] {
+			seen[text] = true
+			links = append(links, text)
+		}
+	}
+	return links
+}
+
+// syncNoteLinks updates the note_links table for a given note
+func (s *Server) syncNoteLinks(ctx context.Context, noteID int64, content string) {
+	links := parseWikilinks(content)
+
+	// Delete existing outlinks
+	if err := s.queries.DeleteNoteLinks(ctx, noteID); err != nil {
+		s.logger.Error("failed to delete note links", "error", err)
+		return
+	}
+
+	// Create new links
+	for _, linkText := range links {
+		target, err := s.queries.GetNoteByTitle(ctx, linkText)
+		if err != nil {
+			continue // Target note doesn't exist yet, skip
+		}
+		if err := s.queries.CreateNoteLink(ctx, db.CreateNoteLinkParams{
+			SourceNoteID: noteID,
+			TargetNoteID: target.ID,
+			LinkText:     linkText,
+		}); err != nil {
+			s.logger.Error("failed to create note link", "error", err)
+		}
+	}
+}
+
+// --- Backlinks handler ---
+
+func (s *Server) handleBacklinks(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+
+	backlinks, err := s.queries.GetBacklinks(ctx, id)
+	if err != nil {
+		s.logger.Error("failed to get backlinks", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to get backlinks")
+		return
+	}
+
+	result, err := s.notesWithTags(ctx, backlinks)
+	if err != nil {
+		s.logger.Error("failed to get tags for backlinks", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to get backlinks")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+// --- Pin handlers ---
+
+func (s *Server) handlePinNote(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+
+	if err := s.queries.PinNote(ctx, id); err != nil {
+		s.logger.Error("failed to pin note", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to pin note")
+		return
+	}
+
+	note, err := s.queries.GetNote(ctx, id)
+	if err != nil {
+		s.logger.Error("failed to get note after pin", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to get note")
+		return
+	}
+	resp, err := s.noteWithTags(ctx, note)
+	if err != nil {
+		s.logger.Error("failed to get tags", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to get note")
+		return
+	}
+
+	s.broadcast(Event{Type: "note_updated", Data: resp})
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleUnpinNote(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+
+	if err := s.queries.UnpinNote(ctx, id); err != nil {
+		s.logger.Error("failed to unpin note", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to unpin note")
+		return
+	}
+
+	note, err := s.queries.GetNote(ctx, id)
+	if err != nil {
+		s.logger.Error("failed to get note after unpin", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to get note")
+		return
+	}
+	resp, err := s.noteWithTags(ctx, note)
+	if err != nil {
+		s.logger.Error("failed to get tags", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to get note")
+		return
+	}
+
+	s.broadcast(Event{Type: "note_updated", Data: resp})
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+// --- Graph handler ---
+
+type graphNode struct {
+	ID        int64  `json:"id"`
+	Title     string `json:"title"`
+	FolderID  *int64 `json:"folder_id,omitempty"`
+	LinkCount int    `json:"link_count"`
+}
+
+type graphEdge struct {
+	Source int64  `json:"source"`
+	Target int64  `json:"target"`
+	Label  string `json:"label"`
+}
+
+type graphResponse struct {
+	Nodes []graphNode `json:"nodes"`
+	Edges []graphEdge `json:"edges"`
+}
+
+func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	ctx := r.Context()
+
+	allNotes, err := s.queries.GetAllNotes(ctx)
+	if err != nil {
+		s.logger.Error("failed to get notes for graph", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to get graph")
+		return
+	}
+
+	allLinks, err := s.queries.GetAllNoteLinks(ctx)
+	if err != nil {
+		s.logger.Error("failed to get links for graph", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to get graph")
+		return
+	}
+
+	// Count links per note
+	linkCounts := make(map[int64]int)
+	for _, l := range allLinks {
+		linkCounts[l.SourceNoteID]++
+		linkCounts[l.TargetNoteID]++
+	}
+
+	nodes := make([]graphNode, 0, len(allNotes))
+	for _, n := range allNotes {
+		node := graphNode{
+			ID:        n.ID,
+			Title:     n.Title,
+			LinkCount: linkCounts[n.ID],
+		}
+		if n.FolderID.Valid {
+			node.FolderID = &n.FolderID.Int64
+		}
+		nodes = append(nodes, node)
+	}
+
+	edges := make([]graphEdge, 0, len(allLinks))
+	for _, l := range allLinks {
+		edges = append(edges, graphEdge{
+			Source: l.SourceNoteID,
+			Target: l.TargetNoteID,
+			Label:  l.LinkText,
+		})
+	}
+
+	s.writeJSON(w, http.StatusOK, graphResponse{Nodes: nodes, Edges: edges})
 }
 

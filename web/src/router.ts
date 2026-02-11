@@ -9,6 +9,11 @@ const router = createRouter({
       component: () => import('./components/AppLayout.vue'),
     },
     {
+      path: '/notes/:id',
+      name: 'note',
+      component: () => import('./components/AppLayout.vue'),
+    },
+    {
       path: '/dashboard',
       name: 'dashboard',
       component: () => import('./components/Dashboard.vue'),
@@ -17,6 +22,10 @@ const router = createRouter({
       path: '/settings',
       name: 'settings',
       component: () => import('./components/SettingsPage.vue'),
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      redirect: '/',
     },
   ],
 })

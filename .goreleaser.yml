@@ -3,6 +3,7 @@ version: 2
 before:
   hooks:
     - go mod tidy
+    - bash -c "cd web && npm install --prefer-offline 2>/dev/null || bun install && npm run build 2>/dev/null || bun run build"
 
 builds:
   - id: noted

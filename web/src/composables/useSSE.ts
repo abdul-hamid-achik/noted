@@ -1,39 +1,39 @@
 import { ref, onMounted, onUnmounted } from 'vue'
-import type { WebSocketEvent } from '../types'
 
-export function useWebSocket(onEvent: (event: WebSocketEvent) => void) {
+export interface SSEEvent {
+  type: string
+  data: unknown
+}
+
+export function useSSE(onEvent: (event: SSEEvent) => void) {
   const connected = ref(false)
-  let ws: WebSocket | null = null
+  let eventSource: EventSource | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let reconnectDelay = 1000
   const maxReconnectDelay = 30000
 
   function connect() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${protocol}//${window.location.host}/ws`
-    ws = new WebSocket(url)
+    const url = `${window.location.origin}/api/events`
+    eventSource = new EventSource(url)
 
-    ws.onopen = () => {
+    eventSource.onopen = () => {
       connected.value = true
       reconnectDelay = 1000
     }
 
-    ws.onmessage = (event) => {
+    eventSource.onmessage = (event) => {
       try {
-        const parsed = JSON.parse(event.data) as WebSocketEvent
+        const parsed = JSON.parse(event.data) as SSEEvent
         onEvent(parsed)
       } catch {
         // ignore malformed messages
       }
     }
 
-    ws.onclose = () => {
+    eventSource.onerror = () => {
       connected.value = false
+      eventSource?.close()
       scheduleReconnect()
-    }
-
-    ws.onerror = () => {
-      ws?.close()
     }
   }
 
@@ -51,10 +51,9 @@ export function useWebSocket(onEvent: (event: WebSocketEvent) => void) {
       clearTimeout(reconnectTimer)
       reconnectTimer = null
     }
-    if (ws) {
-      ws.onclose = null
-      ws.close()
-      ws = null
+    if (eventSource) {
+      eventSource.close()
+      eventSource = null
     }
     connected.value = false
   }

@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS notes (
   expires_at DATETIME, -- TTL support: when the note should expire
   source TEXT, -- where the note originated (e.g., "code-review", "manual", "mcp")
   source_ref TEXT, -- reference to source location (e.g., "main.go:50")
-  folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL
+  folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
+  pinned BOOLEAN DEFAULT FALSE,
+  pinned_at DATETIME
 );
 
 -- Tags table (normalized)
@@ -46,3 +48,16 @@ CREATE INDEX IF NOT EXISTS idx_notes_expires_at ON notes(expires_at) WHERE expir
 CREATE INDEX IF NOT EXISTS idx_notes_folder_id ON notes(folder_id);
 CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
 CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id);
+
+-- Note links for bidirectional linking (wikilinks)
+CREATE TABLE IF NOT EXISTS note_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  target_note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  link_text TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(source_note_id, target_note_id, link_text)
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_links_source ON note_links(source_note_id);
+CREATE INDEX IF NOT EXISTS idx_note_links_target ON note_links(target_note_id);

@@ -1,53 +1,67 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref } from 'vue'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { useNotesStore } from '../stores/notes'
+import { useRouter } from 'vue-router'
 
 const notesStore = useNotesStore()
+const router = useRouter()
 const previewContainer = ref<HTMLElement | null>(null)
 
-marked.setOptions({
+// Custom renderer for wikilinks [[note title]]
+const wikilinkExtension = {
+  name: 'wikilink',
+  level: 'inline' as const,
+  start(src: string) { return src.indexOf('[[') },
+  tokenizer(src: string) {
+    const match = src.match(/^\[\[([^\]]+)\]\]/)
+    if (match) {
+      return {
+        type: 'wikilink',
+        raw: match[0],
+        text: match[1].trim(),
+      }
+    }
+    return undefined
+  },
+  renderer(token: { text: string }) {
+    const title = token.text
+    return `<a class="wikilink" data-wikilink="${title}" href="#" title="Link to: ${title}">${title}</a>`
+  },
+}
+
+marked.use({
   breaks: true,
   gfm: true,
+  extensions: [wikilinkExtension],
 })
 
 const renderedContent = computed(() => {
   const content = notesStore.currentNote?.content || ''
   if (!content) return '<p class="text-nord3">No content to preview</p>'
-  return marked.parse(content) as string
+  const html = marked.parse(content) as string
+  return DOMPurify.sanitize(html, {
+    ADD_ATTR: ['data-wikilink'],
+  })
 })
 
-// Basic scroll sync: listen for scroll events on a hypothetical editor scroll
-// This is a simple percentage-based approach
-const scrollPercent = ref(0)
-
-function handleScroll(e: Event) {
-  const el = e.target as HTMLElement
-  const maxScroll = el.scrollHeight - el.clientHeight
-  if (maxScroll > 0) {
-    scrollPercent.value = el.scrollTop / maxScroll
+function handlePreviewClick(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (target.classList.contains('wikilink')) {
+    e.preventDefault()
+    const title = target.getAttribute('data-wikilink')
+    if (title) {
+      const note = notesStore.notes.find(
+        (n) => n.title.toLowerCase() === title.toLowerCase()
+      )
+      if (note) {
+        notesStore.selectNote(note)
+        router.push(`/notes/${note.id}`)
+      }
+    }
   }
 }
-
-// Expose scroll sync for external use
-function syncScrollTo(percent: number) {
-  if (!previewContainer.value) return
-  const el = previewContainer.value
-  const maxScroll = el.scrollHeight - el.clientHeight
-  el.scrollTop = maxScroll * percent
-}
-
-watch(scrollPercent, (p) => {
-  syncScrollTo(p)
-})
-
-onMounted(() => {
-  // placeholder for scroll sync setup
-})
-
-onUnmounted(() => {
-  // cleanup
-})
 </script>
 
 <template>
@@ -61,7 +75,7 @@ onUnmounted(() => {
     <div
       ref="previewContainer"
       class="flex-1 overflow-y-auto p-4 prose-nord"
-      @scroll="handleScroll"
+      @click="handlePreviewClick"
       v-html="renderedContent"
     />
   </div>

@@ -165,3 +165,50 @@ WHERE id = ?;
 
 -- name: GetTag :one
 SELECT * FROM tags WHERE id = ?;
+
+-- Count queries (avoid loading all rows)
+
+-- name: CountNotes :one
+SELECT COUNT(*) FROM notes;
+
+-- name: CountTags :one
+SELECT COUNT(*) FROM tags;
+
+-- Note links (wikilinks / bidirectional linking)
+
+-- name: CreateNoteLink :exec
+INSERT INTO note_links (source_note_id, target_note_id, link_text)
+VALUES (?, ?, ?)
+ON CONFLICT DO NOTHING;
+
+-- name: DeleteNoteLinks :exec
+DELETE FROM note_links WHERE source_note_id = ?;
+
+-- name: GetBacklinks :many
+SELECT n.* FROM notes n
+INNER JOIN note_links nl ON n.id = nl.source_note_id
+WHERE nl.target_note_id = ?
+ORDER BY n.updated_at DESC;
+
+-- name: GetOutlinks :many
+SELECT n.* FROM notes n
+INNER JOIN note_links nl ON n.id = nl.target_note_id
+WHERE nl.source_note_id = ?
+ORDER BY n.title;
+
+-- name: GetAllNoteLinks :many
+SELECT * FROM note_links;
+
+-- name: GetNoteByTitle :one
+SELECT * FROM notes WHERE title = ? LIMIT 1;
+
+-- Pin/star support
+
+-- name: PinNote :exec
+UPDATE notes SET pinned = TRUE, pinned_at = CURRENT_TIMESTAMP WHERE id = ?;
+
+-- name: UnpinNote :exec
+UPDATE notes SET pinned = FALSE, pinned_at = NULL WHERE id = ?;
+
+-- name: GetPinnedNotes :many
+SELECT * FROM notes WHERE pinned = TRUE ORDER BY pinned_at DESC;
