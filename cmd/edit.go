@@ -61,6 +61,23 @@ var editCmd = &cobra.Command{
 			newContent = edited
 		}
 
+		// Auto-save current state as a version before updating (only if something changed)
+		if newTitle != note.Title || newContent != note.Content {
+			latestVerNum, err := getLatestVersionNumber(ctx, id)
+			if err != nil {
+				return fmt.Errorf("failed to get latest version number: %w", err)
+			}
+			_, err = database.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
+				NoteID:        id,
+				Title:         note.Title,
+				Content:       note.Content,
+				VersionNumber: latestVerNum + 1,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to save version: %w", err)
+			}
+		}
+
 		_, err = database.UpdateNote(ctx, db.UpdateNoteParams{
 			ID:      id,
 			Title:   newTitle,

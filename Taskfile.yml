@@ -54,6 +54,13 @@ tasks:
     cmds:
       - bun run dev
 
+  web:test:
+    desc: Run frontend tests
+    dir: web
+    deps: [web:install]
+    cmds:
+      - bun run test
+
   # --- Go tasks ---
 
   build:
@@ -100,10 +107,11 @@ tasks:
       - golangci-lint run ./...
 
   test:
-    desc: Run tests
-    deps: [generate]
+    desc: Run all tests (Go + frontend)
+    deps: [generate, web:install]
     cmds:
       - go test -v ./...
+      - cd web && bun run test
 
   clean:
     desc: Clean build artifacts

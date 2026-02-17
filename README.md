@@ -1,18 +1,26 @@
 # noted
 
-A fast, lightweight CLI knowledge base for capturing and organizing notes from your terminal. Includes an MCP server for AI agent integration.
+A fast, lightweight CLI knowledge base for capturing and organizing notes from your terminal. Includes an MCP server for AI agent integration and an embedded web interface.
 
 ## Features
 
 - **Quick capture** - Create notes with titles, content, and tags in one command
 - **Rich tagging** - Organize notes with multiple tags, view tag statistics
 - **Full-text search** - Find notes by searching titles and content
+- **Daily notes** - Obsidian-style daily notes with auto-tagging and folder organization
+- **Templates** - Create reusable note templates with variable interpolation
+- **Version history** - Automatic versioning on edits, diff, and restore
+- **Task extraction** - Extract markdown checkboxes from notes as a unified task list
+- **Link health** - Find orphan notes, dead-ends, and broken wikilinks
+- **Random discovery** - Surface random notes for review and serendipity
+- **Bidirectional links** - Wikilink support with backlinks and outgoing links
 - **Agent memory system** - Remember, recall, and forget memories with categories and importance levels
 - **TTL support** - Set time-to-live for auto-expiring notes and memories
 - **Source tracking** - Track where notes originated (code reviews, meetings, etc.)
 - **Import/Export** - Markdown, JSON, and JSONL formats with YAML frontmatter
 - **Editor integration** - Uses your `$EDITOR` for composing longer notes
-- **MCP Server** - Expose notes to AI agents like Claude via Model Context Protocol
+- **MCP Server** - Expose notes to AI agents like Claude via Model Context Protocol (27 tools)
+- **Web interface** - Embedded Vue 3 web UI with CodeMirror editor and Nord theme
 - **Semantic search** - Optional vector similarity search powered by veclite
 - **Portable** - Single binary, SQLite database, XDG-compliant storage
 
@@ -30,6 +38,12 @@ noted list
 
 # Search notes
 noted grep "roadmap"
+
+# Open today's daily note
+noted daily
+
+# Launch web interface
+noted serve --open
 ```
 
 ## Installation
@@ -81,6 +95,9 @@ noted add -t "Journal Entry"
 
 # Note with multiple tags
 noted add -t "Go Tips" -c "Use gofmt" -T "golang,programming,tips"
+
+# Create from a template
+noted add -t "Sprint Retro" --template meeting
 ```
 
 **Flags:**
@@ -89,6 +106,7 @@ noted add -t "Go Tips" -c "Use gofmt" -T "golang,programming,tips"
 | `--title` | `-t` | Note title (required) |
 | `--content` | `-c` | Note content (opens editor if omitted) |
 | `--tags` | `-T` | Comma-separated tags |
+| `--template` | | Create from a named template |
 | `--ttl` | | Time-to-live (e.g., `24h`, `7d`) |
 | `--source` | | Source identifier (e.g., `code-review`) |
 | `--source-ref` | | Source reference (e.g., `main.go:50`) |
@@ -131,23 +149,9 @@ noted show 1 --raw
 |------|-------|-------------|
 | `--raw` | `-r` | Output only the note content |
 
-**Example output:**
-```
-# Meeting Notes
-
-ID: 1
-Created: 2026-01-29 14:30
-Updated: 2026-01-29 14:30
-Tags: work, meetings
-
----
-
-Discussed Q1 roadmap with the team.
-```
-
 ### Editing Notes
 
-Modify existing notes:
+Modify existing notes (automatically saves a version snapshot):
 
 ```bash
 # Update title only
@@ -161,9 +165,6 @@ noted edit 1 -T "newtag1,newtag2"
 
 # Open in editor (when no flags provided)
 noted edit 1
-
-# Clear all tags
-noted edit 1 -T ""
 ```
 
 **Flags:**
@@ -214,14 +215,6 @@ noted tags --delete-unused
 | `--count` | `-c` | Show note count per tag |
 | `--delete-unused` | `-d` | Delete tags with no notes |
 
-**Example output:**
-```
-$ noted tags --count
-golang (5)
-personal (3)
-work (12)
-```
-
 ### Searching Notes
 
 Find notes by text in title or content:
@@ -238,6 +231,154 @@ noted grep "meeting" -n 5
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--limit` | `-n` | Maximum results (default: 20) |
+
+### Daily Notes
+
+Manage daily notes in Obsidian style. Creates a note titled with the date, tagged "daily", and stored in a "Daily Notes" folder:
+
+```bash
+# Show/create today's daily note
+noted daily
+
+# Append to today's note
+noted daily --append "- [ ] Buy milk"
+
+# Prepend to today's note
+noted daily --prepend "Morning thoughts"
+
+# Show/create yesterday's note
+noted daily --yesterday
+
+# Show/create note for a specific date
+noted daily --date 2026-02-14
+
+# List recent daily notes (last 30 days)
+noted daily --list
+```
+
+**Flags:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--append` | `-a` | Append content to the daily note |
+| `--prepend` | `-p` | Prepend content to the daily note |
+| `--yesterday` | `-y` | Show/create yesterday's note |
+| `--date` | `-d` | Specific date (YYYY-MM-DD) |
+| `--list` | `-l` | List recent daily notes |
+| `--json` | `-j` | Output as JSON |
+
+### Templates
+
+Create reusable note templates with variable interpolation:
+
+```bash
+# List all templates
+noted template list
+
+# Create a template
+noted template create -n "meeting" -c "# {{title}}\n\nDate: {{date}}\n\n## Attendees\n\n## Notes\n\n## Action Items\n- [ ] "
+
+# Show a template
+noted template show meeting
+
+# Edit a template in $EDITOR
+noted template edit meeting
+
+# Delete a template
+noted template delete meeting
+
+# Create a note from a template
+noted add -t "Sprint Retro" --template meeting
+```
+
+**Template variables:**
+| Variable | Replaced with |
+|----------|--------------|
+| `{{date}}` | Current date (YYYY-MM-DD) |
+| `{{time}}` | Current time (HH:MM) |
+| `{{datetime}}` | Current date and time |
+| `{{title}}` | Note title |
+
+### Version History
+
+Every edit automatically saves a version snapshot. View and restore previous versions:
+
+```bash
+# List version history for a note
+noted history 1
+
+# Show a specific version
+noted history 1 --version 2
+
+# Diff a version against current
+noted diff 1
+
+# Diff a specific version
+noted diff 1 --version 2
+
+# Restore to a previous version (saves current as new version first)
+noted restore 1 --version 2
+```
+
+### Task Extraction
+
+Extract markdown tasks (checkboxes) from your notes:
+
+```bash
+# List all tasks across all notes
+noted tasks
+
+# Show only pending tasks
+noted tasks --pending
+
+# Show only completed tasks
+noted tasks --completed
+
+# Filter by tag
+noted tasks --tag work
+
+# Filter by note ID
+noted tasks --note 42
+
+# Show task counts only
+noted tasks --count
+```
+
+**Flags:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--pending` | | Show only pending tasks |
+| `--completed` | | Show only completed tasks |
+| `--tag` | `-T` | Filter by tag name |
+| `--note` | | Filter by note ID |
+| `--count` | | Show counts only |
+| `--json` | `-j` | Output as JSON |
+
+### Link Health
+
+Analyze the health of your knowledge graph:
+
+```bash
+# Find orphan notes (no links in or out)
+noted orphans
+
+# Find dead-end notes (incoming links, no outgoing)
+noted deadends
+
+# Find broken wikilinks
+noted unresolved
+```
+
+### Random Note
+
+Surface a random note for review:
+
+```bash
+# Get a random note
+noted random
+
+# Random note from a specific tag
+noted random --tag work
+```
 
 ### Memory System
 
@@ -356,38 +497,6 @@ noted export --since 2026-01-01 -f jsonl
 | `--tag` | `-T` | Filter by tag |
 | `--since` | | Export notes created since date (YYYY-MM-DD) |
 
-**Markdown format:**
-```markdown
----
-title: "Meeting Notes"
-tags: ["work", "meetings"]
-created: 2026-01-29T14:30:00Z
-updated: 2026-01-29T14:30:00Z
----
-
-Discussed Q1 roadmap with the team.
-```
-
-**JSON format:**
-```json
-[
-  {
-    "id": 1,
-    "title": "Meeting Notes",
-    "content": "Discussed Q1 roadmap with the team.",
-    "tags": ["work", "meetings"],
-    "created_at": "2026-01-29T14:30:00Z",
-    "updated_at": "2026-01-29T14:30:00Z"
-  }
-]
-```
-
-**JSONL format (one object per line):**
-```json
-{"id":1,"title":"Meeting Notes","content":"Discussed Q1 roadmap.","tags":["work"],"created_at":"2026-01-29T14:30:00Z","updated_at":"2026-01-29T14:30:00Z"}
-{"id":2,"title":"Todo","content":"Buy groceries","tags":["personal"],"created_at":"2026-01-29T15:00:00Z","updated_at":"2026-01-29T15:00:00Z"}
-```
-
 ### Importing Notes
 
 Import markdown files into noted:
@@ -412,21 +521,23 @@ noted import ~/exports/ -T "imported,backup"
 | `--recursive` | `-r` | Scan subdirectories |
 | `--tags` | `-T` | Add tags to all imported notes |
 
-**Supported file formats:**
+### Web Interface
 
-Files with YAML frontmatter:
-```markdown
----
-title: "My Note"
-tags: [idea, project]
----
+Launch the embedded web UI for a graphical experience:
 
-Note content here.
+```bash
+# Start web server on default port (3000)
+noted serve
+
+# Specify port and auto-open browser
+noted serve --port 8080 --open
 ```
 
-Files without frontmatter use:
-1. First `# Heading` as title
-2. Filename (without `.md`) as fallback
+The web interface includes:
+- CodeMirror 6 editor with vim mode
+- Nord theme throughout
+- Live updates via SSE
+- Full note management (create, edit, delete, search)
 
 ### Version Information
 
@@ -440,7 +551,7 @@ noted version --json
 
 ## MCP Server
 
-noted includes an MCP (Model Context Protocol) server that exposes your knowledge base to AI agents like Claude.
+noted includes an MCP (Model Context Protocol) server that exposes your knowledge base to AI agents like Claude. With 27 tools covering notes, daily notes, templates, tasks, versioning, and link health, agents get full access to your knowledge base.
 
 ### Starting the Server
 
@@ -480,6 +591,8 @@ Or manually edit `~/.claude/settings.json`:
 
 ### Available MCP Tools
 
+#### Core Notes
+
 | Tool | Description |
 |------|-------------|
 | `noted_create` | Create a new note with title, content, and optional tags |
@@ -489,11 +602,55 @@ Or manually edit `~/.claude/settings.json`:
 | `noted_update` | Update a note's title, content, or tags |
 | `noted_delete` | Delete a note by ID |
 | `noted_tags` | List all tags with their note counts |
+| `noted_random` | Get a random note, optionally filtered by tag |
 | `noted_semantic_search` | Search notes using vector similarity (requires veclite) |
+| `noted_sync` | Sync notes to the semantic search index |
+
+#### Daily Notes
+
+| Tool | Description |
+|------|-------------|
+| `noted_daily` | Get or create a daily note. Optionally append or prepend content. |
+| `noted_daily_list` | List recent daily notes (last 30 days) |
+
+#### Templates
+
+| Tool | Description |
+|------|-------------|
+| `noted_template_list` | List all note templates |
+| `noted_template_create` | Create a new template with `{{date}}`, `{{time}}`, `{{datetime}}`, `{{title}}` variables |
+| `noted_template_get` | Get a template by name |
+| `noted_template_delete` | Delete a template by name |
+| `noted_template_apply` | Apply a template to create a new note with variable interpolation |
+
+#### Task Extraction
+
+| Tool | Description |
+|------|-------------|
+| `noted_tasks` | Extract markdown tasks (checkboxes) from notes. Filter by note, tag, or status. |
+
+#### Version History
+
+| Tool | Description |
+|------|-------------|
+| `noted_history` | List version history for a note |
+| `noted_version_get` | Get a specific version of a note (full content) |
+| `noted_restore` | Restore a note to a previous version (saves current state first) |
+
+#### Link Health
+
+| Tool | Description |
+|------|-------------|
+| `noted_backlinks` | Get all notes that link to a given note |
+| `noted_orphans` | Find orphan notes and dead-end notes in the knowledge graph |
+
+#### Agent Memory
+
+| Tool | Description |
+|------|-------------|
 | `noted_remember` | Store a memory with category, importance, TTL, and source tracking |
 | `noted_recall` | Recall relevant memories by query with semantic or keyword search |
 | `noted_forget` | Delete old or low-importance memories with dry-run support |
-| `noted_sync` | Sync notes to the semantic search index |
 
 ### Memory Tools for Agents
 
@@ -600,19 +757,27 @@ noted/
 │   ├── add.go             # Create notes
 │   ├── list.go            # List notes
 │   ├── show.go            # Display single note
-│   ├── edit.go            # Modify notes
+│   ├── edit.go            # Modify notes (auto-versioning)
 │   ├── delete.go          # Remove notes
 │   ├── tags.go            # Tag management
 │   ├── grep.go            # Search notes
+│   ├── daily.go           # Daily notes (Obsidian-style)
+│   ├── template.go        # Template management
+│   ├── history.go         # Version history, diff, restore
+│   ├── tasks.go           # Task extraction from notes
+│   ├── links.go           # Link health (orphans, deadends, unresolved)
+│   ├── random.go          # Random note discovery
 │   ├── remember.go        # Store memories
 │   ├── recall.go          # Search memories
 │   ├── forget.go          # Delete memories
 │   ├── export.go          # Export to markdown/JSON/JSONL
 │   ├── import.go          # Import markdown files
+│   ├── serve.go           # Web interface server
 │   ├── mcp.go             # MCP server command
 │   ├── sync.go            # Sync to veclite
 │   ├── version.go         # Version info
 │   └── editor.go          # Editor integration
+├── web/                    # Frontend source (Vue 3 SPA)
 ├── internal/
 │   ├── config/            # XDG-compliant configuration
 │   ├── db/                # Database layer (sqlc)
@@ -622,15 +787,11 @@ noted/
 │   │   ├── migrations/    # SQL migration files
 │   │   └── *.go           # Generated code
 │   ├── memory/            # Shared memory logic
-│   │   ├── types.go       # Memory types and validation
-│   │   ├── remember.go    # Create memories
-│   │   ├── recall.go      # Search memories
-│   │   └── forget.go      # Delete memories
-│   ├── mcp/               # MCP server implementation
+│   ├── mcp/               # MCP server (27 tools)
 │   │   ├── server.go      # Server setup and transport
 │   │   └── tools.go       # Tool handlers
+│   ├── web/               # Web server + API handlers + embed
 │   └── veclite/           # Semantic search integration
-│       └── syncer.go      # veclite sync and search
 ├── main.go                # Entry point
 ├── Taskfile.yml           # Build tasks
 └── sqlc.yaml              # sqlc configuration
@@ -643,6 +804,7 @@ noted/
 - **SQL Code Gen**: [sqlc](https://sqlc.dev)
 - **MCP SDK**: [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk)
 - **Vector Search**: [veclite](https://github.com/abdul-hamid-achik/veclite)
+- **Web Frontend**: Vue 3 + Vite + Tailwind CSS v4 + CodeMirror 6
 - **Build Tool**: [Task](https://taskfile.dev)
 
 ## Development
@@ -653,6 +815,7 @@ noted/
 - [Task](https://taskfile.dev) (optional, for build automation)
 - [sqlc](https://sqlc.dev) (for regenerating database code)
 - [golangci-lint](https://golangci-lint.run) (for linting)
+- [Bun](https://bun.sh) (for web frontend development)
 
 ### Build Commands
 
@@ -680,6 +843,11 @@ task install
 
 # Clean build artifacts
 task clean
+
+# Web frontend
+task web:install    # Install frontend dependencies
+task web:build      # Build frontend for embedding
+task web:dev        # Start frontend dev server
 ```
 
 ### Running Tests
@@ -729,3 +897,5 @@ Built with:
 - [modernc.org/sqlite](https://modernc.org/sqlite) - Pure Go SQLite
 - [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) - Model Context Protocol
 - [veclite](https://github.com/abdul-hamid-achik/veclite) - Vector database
+- [Vue 3](https://vuejs.org) - Web framework
+- [Vite](https://vite.dev) - Frontend build tool

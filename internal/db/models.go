@@ -44,7 +44,24 @@ type NoteTag struct {
 	TagID  int64 `json:"tag_id"`
 }
 
+type NoteVersion struct {
+	ID            int64        `json:"id"`
+	NoteID        int64        `json:"note_id"`
+	Title         string       `json:"title"`
+	Content       string       `json:"content"`
+	VersionNumber int64        `json:"version_number"`
+	CreatedAt     sql.NullTime `json:"created_at"`
+}
+
 type Tag struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
+}
+
+type Template struct {
+	ID        int64        `json:"id"`
+	Name      string       `json:"name"`
+	Content   string       `json:"content"`
+	CreatedAt sql.NullTime `json:"created_at"`
+	UpdatedAt sql.NullTime `json:"updated_at"`
 }

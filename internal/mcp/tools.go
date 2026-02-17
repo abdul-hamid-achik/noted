@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/abdul-hamid-achik/noted/internal/db"
@@ -12,6 +15,8 @@ import (
 	"github.com/abdul-hamid-achik/noted/internal/veclite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+var taskRegex = regexp.MustCompile(`^\s*-\s*\[([ xX])\]\s*(.+)$`)
 
 // Input types for MCP tools
 // The jsonschema tag provides the description for the JSON schema.
@@ -82,6 +87,80 @@ type forgetInput struct {
 type syncInput struct {
 	Force bool `json:"force,omitempty" jsonschema:"Re-sync all notes even if already synced"`
 }
+
+// Daily notes input types
+
+type dailyInput struct {
+	Date    string `json:"date,omitempty" jsonschema:"Date in YYYY-MM-DD format (default: today)"`
+	Append  string `json:"append,omitempty" jsonschema:"Text to append to the daily note"`
+	Prepend string `json:"prepend,omitempty" jsonschema:"Text to prepend to the daily note"`
+}
+
+type dailyListInput struct {
+	Limit int `json:"limit,omitempty" jsonschema:"Max results (default 30)"`
+}
+
+// Template input types
+
+type templateListInput struct{}
+
+type templateCreateInput struct {
+	Name    string `json:"name" jsonschema:"Template name (unique)"`
+	Content string `json:"content" jsonschema:"Template content with optional variables: {{date}}, {{time}}, {{datetime}}, {{title}}"`
+}
+
+type templateGetInput struct {
+	Name string `json:"name" jsonschema:"Template name to retrieve"`
+}
+
+type templateDeleteInput struct {
+	Name string `json:"name" jsonschema:"Template name to delete"`
+}
+
+type templateApplyInput struct {
+	TemplateName string   `json:"template_name" jsonschema:"Name of the template to apply"`
+	Title        string   `json:"title" jsonschema:"Title for the new note"`
+	Tags         []string `json:"tags,omitempty" jsonschema:"Tags for the new note"`
+}
+
+// Task extraction input types
+
+type tasksInput struct {
+	NoteID    int64  `json:"note_id,omitempty" jsonschema:"Filter tasks from a specific note"`
+	Tag       string `json:"tag,omitempty" jsonschema:"Filter tasks from notes with this tag"`
+	Pending   bool   `json:"pending,omitempty" jsonschema:"Show only pending tasks"`
+	Completed bool   `json:"completed,omitempty" jsonschema:"Show only completed tasks"`
+}
+
+// History/versioning input types
+
+type historyInput struct {
+	NoteID int64 `json:"note_id" jsonschema:"Note ID to get history for"`
+}
+
+type versionGetInput struct {
+	NoteID  int64 `json:"note_id" jsonschema:"Note ID"`
+	Version int64 `json:"version" jsonschema:"Version number to retrieve"`
+}
+
+type restoreInput struct {
+	NoteID  int64 `json:"note_id" jsonschema:"Note ID to restore"`
+	Version int64 `json:"version" jsonschema:"Version number to restore to"`
+}
+
+// Random note input
+
+type randomInput struct {
+	Tag string `json:"tag,omitempty" jsonschema:"Pick from notes with this tag"`
+}
+
+// Link health input types
+
+type backlinksInput struct {
+	NoteID int64 `json:"note_id" jsonschema:"Note ID to find backlinks for"`
+}
+
+type linkHealthInput struct{}
 
 // Output types for formatted responses
 
@@ -198,6 +277,116 @@ func (s *Server) registerTools() {
 		Description: "Sync unembedded notes to the semantic search index (requires veclite)",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input syncInput) (*mcp.CallToolResult, any, error) {
 		return s.toolSync(ctx, input)
+	})
+
+	// --- Daily Notes ---
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_daily",
+		Description: "Get or create today's daily note. Optionally append or prepend content.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input dailyInput) (*mcp.CallToolResult, any, error) {
+		return s.toolDaily(ctx, input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_daily_list",
+		Description: "List recent daily notes (last 30 days by default)",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input dailyListInput) (*mcp.CallToolResult, any, error) {
+		return s.toolDailyList(ctx, input)
+	})
+
+	// --- Templates ---
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_template_list",
+		Description: "List all note templates",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input templateListInput) (*mcp.CallToolResult, any, error) {
+		return s.toolTemplateList(ctx)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_template_create",
+		Description: "Create a new note template. Supports variables: {{date}}, {{time}}, {{datetime}}, {{title}}",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input templateCreateInput) (*mcp.CallToolResult, any, error) {
+		return s.toolTemplateCreate(ctx, input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_template_get",
+		Description: "Get a template by name",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input templateGetInput) (*mcp.CallToolResult, any, error) {
+		return s.toolTemplateGet(ctx, input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_template_delete",
+		Description: "Delete a template by name",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input templateDeleteInput) (*mcp.CallToolResult, any, error) {
+		return s.toolTemplateDelete(ctx, input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_template_apply",
+		Description: "Apply a template to create a new note. Variables like {{date}}, {{title}} are interpolated.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input templateApplyInput) (*mcp.CallToolResult, any, error) {
+		return s.toolTemplateApply(ctx, input)
+	})
+
+	// --- Task Extraction ---
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_tasks",
+		Description: "Extract markdown tasks (checkboxes) from notes. Filter by note, tag, or completion status.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input tasksInput) (*mcp.CallToolResult, any, error) {
+		return s.toolTasks(ctx, input)
+	})
+
+	// --- Version History ---
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_history",
+		Description: "List version history for a note",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input historyInput) (*mcp.CallToolResult, any, error) {
+		return s.toolHistory(ctx, input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_version_get",
+		Description: "Get a specific version of a note",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input versionGetInput) (*mcp.CallToolResult, any, error) {
+		return s.toolVersionGet(ctx, input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_restore",
+		Description: "Restore a note to a previous version. Saves current state as a new version first.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input restoreInput) (*mcp.CallToolResult, any, error) {
+		return s.toolRestore(ctx, input)
+	})
+
+	// --- Random Note ---
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_random",
+		Description: "Get a random note, optionally filtered by tag",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input randomInput) (*mcp.CallToolResult, any, error) {
+		return s.toolRandom(ctx, input)
+	})
+
+	// --- Link Health ---
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_backlinks",
+		Description: "Get all notes that link to a given note (backlinks/incoming links)",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input backlinksInput) (*mcp.CallToolResult, any, error) {
+		return s.toolBacklinks(ctx, input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "noted_orphans",
+		Description: "Find orphan notes (no incoming or outgoing links) and dead-end notes (incoming but no outgoing)",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input linkHealthInput) (*mcp.CallToolResult, any, error) {
+		return s.toolOrphans(ctx)
 	})
 }
 
@@ -723,6 +912,590 @@ func (s *Server) toolForget(ctx context.Context, input forgetInput) (*mcp.CallTo
 		"deleted":  result.Deleted,
 		"status":   "forgotten",
 		"memories": output,
+	})
+}
+
+// --- Daily Notes tool implementations ---
+
+func (s *Server) toolDaily(ctx context.Context, input dailyInput) (*mcp.CallToolResult, any, error) {
+	targetDate := time.Now()
+	if input.Date != "" {
+		parsed, err := time.Parse("2006-01-02", input.Date)
+		if err != nil {
+			return errorResult(fmt.Sprintf("invalid date format (use YYYY-MM-DD): %v", err))
+		}
+		targetDate = parsed
+	}
+
+	title := targetDate.Format("2006-01-02")
+
+	// Try to get existing daily note
+	note, err := s.queries.GetNoteByTitle(ctx, title)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			return errorResult(fmt.Sprintf("failed to look up daily note: %v", err))
+		}
+		// Create new daily note
+		note, err = s.queries.CreateNoteWithTTL(ctx, db.CreateNoteWithTTLParams{
+			Title:   title,
+			Content: "",
+		})
+		if err != nil {
+			return errorResult(fmt.Sprintf("failed to create daily note: %v", err))
+		}
+		// Tag as "daily"
+		tag, err := s.queries.CreateTag(ctx, "daily")
+		if err == nil {
+			_ = s.queries.AddTagToNote(ctx, db.AddTagToNoteParams{
+				NoteID: note.ID,
+				TagID:  tag.ID,
+			})
+		}
+		// Find or create "Daily Notes" folder
+		folders, _ := s.queries.ListFolders(ctx)
+		var folderID int64
+		for _, f := range folders {
+			if f.Name == "Daily Notes" {
+				folderID = f.ID
+				break
+			}
+		}
+		if folderID == 0 {
+			folder, err := s.queries.CreateFolder(ctx, db.CreateFolderParams{Name: "Daily Notes"})
+			if err == nil {
+				folderID = folder.ID
+			}
+		}
+		if folderID > 0 {
+			_ = s.queries.MoveNoteToFolder(ctx, db.MoveNoteToFolderParams{
+				FolderID: sql.NullInt64{Int64: folderID, Valid: true},
+				ID:       note.ID,
+			})
+		}
+	}
+
+	// Append content if requested
+	if input.Append != "" {
+		content := note.Content
+		if content != "" && len(content) > 0 && content[len(content)-1] != '\n' {
+			content += "\n"
+		}
+		content += input.Append
+		note, err = s.queries.UpdateNote(ctx, db.UpdateNoteParams{
+			Title:   note.Title,
+			Content: content,
+			ID:      note.ID,
+		})
+		if err != nil {
+			return errorResult(fmt.Sprintf("failed to append: %v", err))
+		}
+	}
+
+	// Prepend content if requested
+	if input.Prepend != "" {
+		content := input.Prepend
+		if note.Content != "" {
+			content += "\n" + note.Content
+		}
+		note, err = s.queries.UpdateNote(ctx, db.UpdateNoteParams{
+			Title:   note.Title,
+			Content: content,
+			ID:      note.ID,
+		})
+		if err != nil {
+			return errorResult(fmt.Sprintf("failed to prepend: %v", err))
+		}
+	}
+
+	out := formatNote(note)
+	tags, _ := s.queries.GetTagsForNote(ctx, note.ID)
+	out.Tags = make([]string, len(tags))
+	for i, t := range tags {
+		out.Tags[i] = t.Name
+	}
+
+	return textResult(out)
+}
+
+func (s *Server) toolDailyList(ctx context.Context, input dailyListInput) (*mcp.CallToolResult, any, error) {
+	notes, err := s.queries.GetNotesByTagName(ctx, "daily")
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to list daily notes: %v", err))
+	}
+
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 30
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -limit)
+	var output []noteOutput
+	for _, n := range notes {
+		if n.CreatedAt.Valid && n.CreatedAt.Time.After(cutoff) {
+			output = append(output, formatNote(n))
+		}
+	}
+
+	return textResult(map[string]any{
+		"count": len(output),
+		"notes": output,
+	})
+}
+
+// --- Template tool implementations ---
+
+func (s *Server) toolTemplateList(ctx context.Context) (*mcp.CallToolResult, any, error) {
+	templates, err := s.queries.ListTemplates(ctx)
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to list templates: %v", err))
+	}
+
+	type tmplOut struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	output := make([]tmplOut, len(templates))
+	for i, t := range templates {
+		output[i] = tmplOut{ID: t.ID, Name: t.Name}
+	}
+
+	return textResult(map[string]any{
+		"count":     len(output),
+		"templates": output,
+	})
+}
+
+func (s *Server) toolTemplateCreate(ctx context.Context, input templateCreateInput) (*mcp.CallToolResult, any, error) {
+	if input.Name == "" {
+		return errorResult("name is required")
+	}
+	if input.Content == "" {
+		return errorResult("content is required")
+	}
+
+	tmpl, err := s.queries.CreateTemplate(ctx, db.CreateTemplateParams{
+		Name:    input.Name,
+		Content: input.Content,
+	})
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to create template: %v", err))
+	}
+
+	return textResult(map[string]any{
+		"id":      tmpl.ID,
+		"name":    tmpl.Name,
+		"status":  "created",
+		"message": fmt.Sprintf("Template %q created", tmpl.Name),
+	})
+}
+
+func (s *Server) toolTemplateGet(ctx context.Context, input templateGetInput) (*mcp.CallToolResult, any, error) {
+	if input.Name == "" {
+		return errorResult("name is required")
+	}
+
+	tmpl, err := s.queries.GetTemplateByName(ctx, input.Name)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errorResult(fmt.Sprintf("template %q not found", input.Name))
+		}
+		return errorResult(fmt.Sprintf("failed to get template: %v", err))
+	}
+
+	return textResult(map[string]any{
+		"id":      tmpl.ID,
+		"name":    tmpl.Name,
+		"content": tmpl.Content,
+	})
+}
+
+func (s *Server) toolTemplateDelete(ctx context.Context, input templateDeleteInput) (*mcp.CallToolResult, any, error) {
+	if input.Name == "" {
+		return errorResult("name is required")
+	}
+
+	tmpl, err := s.queries.GetTemplateByName(ctx, input.Name)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errorResult(fmt.Sprintf("template %q not found", input.Name))
+		}
+		return errorResult(fmt.Sprintf("failed to get template: %v", err))
+	}
+
+	if err := s.queries.DeleteTemplateByName(ctx, input.Name); err != nil {
+		return errorResult(fmt.Sprintf("failed to delete template: %v", err))
+	}
+
+	return textResult(map[string]any{
+		"id":      tmpl.ID,
+		"name":    tmpl.Name,
+		"status":  "deleted",
+		"message": fmt.Sprintf("Template %q deleted", tmpl.Name),
+	})
+}
+
+func (s *Server) toolTemplateApply(ctx context.Context, input templateApplyInput) (*mcp.CallToolResult, any, error) {
+	if input.TemplateName == "" {
+		return errorResult("template_name is required")
+	}
+	if input.Title == "" {
+		return errorResult("title is required")
+	}
+
+	tmpl, err := s.queries.GetTemplateByName(ctx, input.TemplateName)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errorResult(fmt.Sprintf("template %q not found", input.TemplateName))
+		}
+		return errorResult(fmt.Sprintf("failed to get template: %v", err))
+	}
+
+	// Interpolate template variables
+	content := interpolateTemplate(tmpl.Content, input.Title)
+
+	note, err := s.queries.CreateNote(ctx, db.CreateNoteParams{
+		Title:   input.Title,
+		Content: content,
+	})
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to create note: %v", err))
+	}
+
+	for _, tagName := range input.Tags {
+		tag, err := s.queries.CreateTag(ctx, tagName)
+		if err != nil {
+			continue
+		}
+		_ = s.queries.AddTagToNote(ctx, db.AddTagToNoteParams{
+			NoteID: note.ID,
+			TagID:  tag.ID,
+		})
+	}
+
+	if s.syncer != nil {
+		_ = s.syncer.SyncNote(note.ID, note.Title, note.Content)
+	}
+
+	return textResult(map[string]any{
+		"id":       note.ID,
+		"title":    note.Title,
+		"template": input.TemplateName,
+		"status":   "created",
+		"message":  fmt.Sprintf("Note #%d created from template %q", note.ID, input.TemplateName),
+	})
+}
+
+// interpolateTemplate replaces template variables with actual values
+func interpolateTemplate(content, title string) string {
+	now := time.Now()
+	r := strings.NewReplacer(
+		"{{date}}", now.Format("2006-01-02"),
+		"{{time}}", now.Format("15:04"),
+		"{{datetime}}", now.Format("2006-01-02 15:04"),
+		"{{title}}", title,
+	)
+	return r.Replace(content)
+}
+
+// --- Task extraction tool implementation ---
+
+func (s *Server) toolTasks(ctx context.Context, input tasksInput) (*mcp.CallToolResult, any, error) {
+	var notes []db.Note
+	var err error
+
+	if input.NoteID > 0 {
+		note, err := s.queries.GetNote(ctx, input.NoteID)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return errorResult(fmt.Sprintf("note #%d not found", input.NoteID))
+			}
+			return errorResult(fmt.Sprintf("failed to get note: %v", err))
+		}
+		notes = []db.Note{note}
+	} else if input.Tag != "" {
+		notes, err = s.queries.GetNotesByTagName(ctx, input.Tag)
+	} else {
+		notes, err = s.queries.GetAllNotes(ctx)
+	}
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to get notes: %v", err))
+	}
+
+	type taskItem struct {
+		Text      string `json:"text"`
+		Completed bool   `json:"completed"`
+		NoteID    int64  `json:"note_id"`
+		NoteTitle string `json:"note_title"`
+		Line      int    `json:"line"`
+	}
+
+	var tasks []taskItem
+	for _, note := range notes {
+		lines := strings.Split(note.Content, "\n")
+		for i, line := range lines {
+			matches := taskRegex.FindStringSubmatch(line)
+			if matches == nil {
+				continue
+			}
+			completed := matches[1] != " "
+			if input.Pending && completed {
+				continue
+			}
+			if input.Completed && !completed {
+				continue
+			}
+			tasks = append(tasks, taskItem{
+				Text:      strings.TrimSpace(matches[2]),
+				Completed: completed,
+				NoteID:    note.ID,
+				NoteTitle: note.Title,
+				Line:      i + 1,
+			})
+		}
+	}
+
+	if tasks == nil {
+		tasks = []taskItem{}
+	}
+
+	pendingCount := 0
+	completedCount := 0
+	for _, t := range tasks {
+		if t.Completed {
+			completedCount++
+		} else {
+			pendingCount++
+		}
+	}
+
+	return textResult(map[string]any{
+		"tasks":     tasks,
+		"pending":   pendingCount,
+		"completed": completedCount,
+		"total":     len(tasks),
+	})
+}
+
+// --- Version history tool implementations ---
+
+func (s *Server) toolHistory(ctx context.Context, input historyInput) (*mcp.CallToolResult, any, error) {
+	_, err := s.queries.GetNote(ctx, input.NoteID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errorResult(fmt.Sprintf("note #%d not found", input.NoteID))
+		}
+		return errorResult(fmt.Sprintf("failed to get note: %v", err))
+	}
+
+	versions, err := s.queries.GetNoteVersions(ctx, input.NoteID)
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to get versions: %v", err))
+	}
+
+	type versionItem struct {
+		VersionNumber int64  `json:"version_number"`
+		Title         string `json:"title"`
+		CreatedAt     string `json:"created_at"`
+	}
+
+	output := make([]versionItem, len(versions))
+	for i, v := range versions {
+		output[i] = versionItem{
+			VersionNumber: v.VersionNumber,
+			Title:         v.Title,
+		}
+		if v.CreatedAt.Valid {
+			output[i].CreatedAt = v.CreatedAt.Time.Format(time.RFC3339)
+		}
+	}
+
+	return textResult(map[string]any{
+		"note_id":  input.NoteID,
+		"count":    len(output),
+		"versions": output,
+	})
+}
+
+func (s *Server) toolVersionGet(ctx context.Context, input versionGetInput) (*mcp.CallToolResult, any, error) {
+	version, err := s.queries.GetNoteVersion(ctx, db.GetNoteVersionParams{
+		NoteID:        input.NoteID,
+		VersionNumber: input.Version,
+	})
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errorResult(fmt.Sprintf("version %d not found for note #%d", input.Version, input.NoteID))
+		}
+		return errorResult(fmt.Sprintf("failed to get version: %v", err))
+	}
+
+	result := map[string]any{
+		"note_id":        input.NoteID,
+		"version_number": version.VersionNumber,
+		"title":          version.Title,
+		"content":        version.Content,
+	}
+	if version.CreatedAt.Valid {
+		result["created_at"] = version.CreatedAt.Time.Format(time.RFC3339)
+	}
+
+	return textResult(result)
+}
+
+func (s *Server) toolRestore(ctx context.Context, input restoreInput) (*mcp.CallToolResult, any, error) {
+	note, err := s.queries.GetNote(ctx, input.NoteID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errorResult(fmt.Sprintf("note #%d not found", input.NoteID))
+		}
+		return errorResult(fmt.Sprintf("failed to get note: %v", err))
+	}
+
+	version, err := s.queries.GetNoteVersion(ctx, db.GetNoteVersionParams{
+		NoteID:        input.NoteID,
+		VersionNumber: input.Version,
+	})
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errorResult(fmt.Sprintf("version %d not found for note #%d", input.Version, input.NoteID))
+		}
+		return errorResult(fmt.Sprintf("failed to get version: %v", err))
+	}
+
+	// Save current state as a new version before restoring
+	latestVer, err := s.queries.GetLatestVersionNumber(ctx, input.NoteID)
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to get latest version: %v", err))
+	}
+	var latestVerNum int64
+	switch v := latestVer.(type) {
+	case int64:
+		latestVerNum = v
+	case float64:
+		latestVerNum = int64(v)
+	}
+
+	_, err = s.queries.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
+		NoteID:        input.NoteID,
+		Title:         note.Title,
+		Content:       note.Content,
+		VersionNumber: latestVerNum + 1,
+	})
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to save current state: %v", err))
+	}
+
+	_, err = s.queries.UpdateNote(ctx, db.UpdateNoteParams{
+		ID:      input.NoteID,
+		Title:   version.Title,
+		Content: version.Content,
+	})
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to restore note: %v", err))
+	}
+
+	if s.syncer != nil {
+		_ = s.syncer.SyncNote(input.NoteID, version.Title, version.Content)
+	}
+
+	return textResult(map[string]any{
+		"note_id":          input.NoteID,
+		"restored_version": version.VersionNumber,
+		"title":            version.Title,
+		"status":           "restored",
+		"message":          fmt.Sprintf("Note #%d restored to version %d", input.NoteID, version.VersionNumber),
+	})
+}
+
+// --- Random note tool implementation ---
+
+func (s *Server) toolRandom(ctx context.Context, input randomInput) (*mcp.CallToolResult, any, error) {
+	var notes []db.Note
+	var err error
+
+	if input.Tag != "" {
+		notes, err = s.queries.GetNotesByTagName(ctx, input.Tag)
+	} else {
+		notes, err = s.queries.GetAllNotes(ctx)
+	}
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to get notes: %v", err))
+	}
+
+	if len(notes) == 0 {
+		return errorResult("no notes found")
+	}
+
+	note := notes[rand.IntN(len(notes))]
+	out := formatNote(note)
+
+	tags, _ := s.queries.GetTagsForNote(ctx, note.ID)
+	out.Tags = make([]string, len(tags))
+	for i, t := range tags {
+		out.Tags[i] = t.Name
+	}
+
+	return textResult(out)
+}
+
+// --- Link health tool implementations ---
+
+func (s *Server) toolBacklinks(ctx context.Context, input backlinksInput) (*mcp.CallToolResult, any, error) {
+	_, err := s.queries.GetNote(ctx, input.NoteID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errorResult(fmt.Sprintf("note #%d not found", input.NoteID))
+		}
+		return errorResult(fmt.Sprintf("failed to get note: %v", err))
+	}
+
+	backlinks, err := s.queries.GetBacklinks(ctx, input.NoteID)
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to get backlinks: %v", err))
+	}
+
+	output := make([]noteOutput, len(backlinks))
+	for i, n := range backlinks {
+		output[i] = formatNote(n)
+	}
+
+	return textResult(map[string]any{
+		"note_id":   input.NoteID,
+		"count":     len(output),
+		"backlinks": output,
+	})
+}
+
+func (s *Server) toolOrphans(ctx context.Context) (*mcp.CallToolResult, any, error) {
+	orphans, err := s.queries.GetOrphanNotes(ctx)
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to get orphan notes: %v", err))
+	}
+
+	deadends, err := s.queries.GetDeadEndNotes(ctx)
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to get dead-end notes: %v", err))
+	}
+
+	type linkItem struct {
+		ID    int64  `json:"id"`
+		Title string `json:"title"`
+	}
+
+	orphanOut := make([]linkItem, len(orphans))
+	for i, n := range orphans {
+		orphanOut[i] = linkItem{ID: n.ID, Title: n.Title}
+	}
+
+	deadendOut := make([]linkItem, len(deadends))
+	for i, n := range deadends {
+		deadendOut[i] = linkItem{ID: n.ID, Title: n.Title}
+	}
+
+	return textResult(map[string]any{
+		"orphans":        orphanOut,
+		"orphan_count":   len(orphanOut),
+		"deadends":       deadendOut,
+		"deadend_count":  len(deadendOut),
 	})
 }
 

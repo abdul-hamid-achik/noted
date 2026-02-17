@@ -42,8 +42,21 @@ Examples:
 		sourceRef, _ := cmd.Flags().GetString("source-ref")
 		folderID, _ := cmd.Flags().GetInt64("folder")
 		asJSON, _ := cmd.Flags().GetBool("json")
+		templateName, _ := cmd.Flags().GetString("template")
 
-		if content == "" {
+		if templateName != "" {
+			ctx := context.Background()
+			tmpl, err := database.GetTemplateByName(ctx, templateName)
+			if err != nil {
+				return fmt.Errorf("template %q not found: %w", templateName, err)
+			}
+			tmplContent := interpolateTemplate(tmpl.Content, title)
+			if content != "" {
+				content = tmplContent + "\n" + content
+			} else {
+				content = tmplContent
+			}
+		} else if content == "" {
 			// Check if stdin has piped data
 			stat, _ := os.Stdin.Stat()
 			if (stat.Mode() & os.ModeCharDevice) == 0 {
@@ -172,6 +185,7 @@ func init() {
 	addCmd.Flags().String("source", "", "Source identifier (e.g., 'code-review', 'manual')")
 	addCmd.Flags().String("source-ref", "", "Source reference (e.g., 'main.go:50')")
 	addCmd.Flags().Int64("folder", 0, "Folder ID to add the note to")
+	addCmd.Flags().String("template", "", "Apply a template by name")
 	addCmd.Flags().BoolP("json", "j", false, "Output as JSON")
 
 	_ = addCmd.MarkFlagRequired("title")

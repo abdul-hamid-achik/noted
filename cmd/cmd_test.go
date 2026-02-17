@@ -659,3 +659,523 @@ func TestVersionVariables(t *testing.T) {
 		t.Errorf("default BuildDate should be 'unknown', got %q", BuildDate)
 	}
 }
+
+// ============================================================================
+// Template Tests
+// ============================================================================
+
+func TestInterpolateTemplate(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		title    string
+		wantDate bool
+		wantTime bool
+		want     string
+	}{
+		{
+			name:    "title variable",
+			content: "# {{title}}",
+			title:   "My Note",
+			want:    "# My Note",
+		},
+		{
+			name:     "date variable",
+			content:  "Date: {{date}}",
+			title:    "",
+			wantDate: true,
+		},
+		{
+			name:     "time variable",
+			content:  "Time: {{time}}",
+			title:    "",
+			wantTime: true,
+		},
+		{
+			name:    "no variables",
+			content: "Plain content",
+			title:   "Title",
+			want:    "Plain content",
+		},
+		{
+			name:    "multiple variables",
+			content: "# {{title}}\n\nCreated: {{date}}\nTitle: {{title}}",
+			title:   "Test",
+			want:    "", // Just check it doesn't contain raw {{
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := interpolateTemplate(tt.content, tt.title)
+
+			if tt.want != "" {
+				if result != tt.want {
+					t.Errorf("expected %q, got %q", tt.want, result)
+				}
+			}
+
+			if strings.Contains(result, "{{") {
+				t.Errorf("uninterpolated variable in result: %q", result)
+			}
+		})
+	}
+}
+
+func TestTemplateCRUD(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create
+	tmpl, err := database.CreateTemplate(ctx, db.CreateTemplateParams{
+		Name:    "meeting",
+		Content: "# {{title}}\n\n## Notes\n",
+	})
+	if err != nil {
+		t.Fatalf("failed to create template: %v", err)
+	}
+	if tmpl.Name != "meeting" {
+		t.Errorf("expected name 'meeting', got %q", tmpl.Name)
+	}
+
+	// Get by name
+	got, err := database.GetTemplateByName(ctx, "meeting")
+	if err != nil {
+		t.Fatalf("failed to get template: %v", err)
+	}
+	if got.Content != "# {{title}}\n\n## Notes\n" {
+		t.Errorf("content mismatch: %q", got.Content)
+	}
+
+	// List
+	all, err := database.ListTemplates(ctx)
+	if err != nil {
+		t.Fatalf("failed to list templates: %v", err)
+	}
+	if len(all) != 1 {
+		t.Errorf("expected 1 template, got %d", len(all))
+	}
+
+	// Update
+	updated, err := database.UpdateTemplate(ctx, db.UpdateTemplateParams{
+		Content: "updated content",
+		ID:      tmpl.ID,
+	})
+	if err != nil {
+		t.Fatalf("failed to update template: %v", err)
+	}
+	if updated.Content != "updated content" {
+		t.Errorf("expected updated content, got %q", updated.Content)
+	}
+
+	// Delete
+	err = database.DeleteTemplateByName(ctx, "meeting")
+	if err != nil {
+		t.Fatalf("failed to delete template: %v", err)
+	}
+
+	all, _ = database.ListTemplates(ctx)
+	if len(all) != 0 {
+		t.Errorf("expected 0 templates after deletion, got %d", len(all))
+	}
+}
+
+// ============================================================================
+// Task Extraction Tests
+// ============================================================================
+
+func TestExtractTasks(t *testing.T) {
+	tests := []struct {
+		name      string
+		content   string
+		wantCount int
+		wantFirst string
+		wantDone  bool
+	}{
+		{
+			name:      "pending task",
+			content:   "- [ ] Buy groceries",
+			wantCount: 1,
+			wantFirst: "Buy groceries",
+			wantDone:  false,
+		},
+		{
+			name:      "completed task lowercase",
+			content:   "- [x] Done task",
+			wantCount: 1,
+			wantFirst: "Done task",
+			wantDone:  true,
+		},
+		{
+			name:      "completed task uppercase",
+			content:   "- [X] Also done",
+			wantCount: 1,
+			wantFirst: "Also done",
+			wantDone:  true,
+		},
+		{
+			name:      "multiple tasks",
+			content:   "# Todo\n- [ ] Task 1\n- [x] Task 2\n- [ ] Task 3",
+			wantCount: 3,
+			wantFirst: "Task 1",
+			wantDone:  false,
+		},
+		{
+			name:      "no tasks",
+			content:   "# Just a heading\n\nSome content\n- A bullet (not a task)",
+			wantCount: 0,
+		},
+		{
+			name:      "indented tasks",
+			content:   "  - [ ] Indented task",
+			wantCount: 1,
+			wantFirst: "Indented task",
+		},
+		{
+			name:      "empty content",
+			content:   "",
+			wantCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			note := db.Note{ID: 1, Title: "Test", Content: tt.content}
+			tasks := extractTasks(note)
+
+			if len(tasks) != tt.wantCount {
+				t.Errorf("expected %d tasks, got %d", tt.wantCount, len(tasks))
+				return
+			}
+
+			if tt.wantCount > 0 {
+				if tasks[0].Text != tt.wantFirst {
+					t.Errorf("expected first task %q, got %q", tt.wantFirst, tasks[0].Text)
+				}
+				if tasks[0].Completed != tt.wantDone {
+					t.Errorf("expected completed=%v, got %v", tt.wantDone, tasks[0].Completed)
+				}
+				if tasks[0].NoteID != 1 {
+					t.Errorf("expected note ID 1, got %d", tasks[0].NoteID)
+				}
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Version History Tests
+// ============================================================================
+
+func TestNoteVersioning(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	noteID := createTestNote(t, "Original", "Original content", nil)
+
+	// Create version 1
+	_, err := database.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
+		NoteID:        noteID,
+		Title:         "Original",
+		Content:       "Original content",
+		VersionNumber: 1,
+	})
+	if err != nil {
+		t.Fatalf("failed to create version: %v", err)
+	}
+
+	// Create version 2
+	_, err = database.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
+		NoteID:        noteID,
+		Title:         "Updated",
+		Content:       "Updated content",
+		VersionNumber: 2,
+	})
+	if err != nil {
+		t.Fatalf("failed to create version 2: %v", err)
+	}
+
+	// List versions
+	versions, err := database.GetNoteVersions(ctx, noteID)
+	if err != nil {
+		t.Fatalf("failed to get versions: %v", err)
+	}
+	if len(versions) != 2 {
+		t.Errorf("expected 2 versions, got %d", len(versions))
+	}
+	// Should be DESC order
+	if versions[0].VersionNumber != 2 {
+		t.Errorf("expected first version to be 2 (DESC), got %d", versions[0].VersionNumber)
+	}
+
+	// Get specific version
+	v1, err := database.GetNoteVersion(ctx, db.GetNoteVersionParams{
+		NoteID:        noteID,
+		VersionNumber: 1,
+	})
+	if err != nil {
+		t.Fatalf("failed to get version 1: %v", err)
+	}
+	if v1.Content != "Original content" {
+		t.Errorf("expected original content in v1, got %q", v1.Content)
+	}
+
+	// Get latest version number
+	latest, err := database.GetLatestVersionNumber(ctx, noteID)
+	if err != nil {
+		t.Fatalf("failed to get latest version number: %v", err)
+	}
+	switch v := latest.(type) {
+	case int64:
+		if v != 2 {
+			t.Errorf("expected latest version 2, got %d", v)
+		}
+	default:
+		t.Errorf("unexpected type for latest version: %T", latest)
+	}
+}
+
+func TestLineDiff(t *testing.T) {
+	tests := []struct {
+		name        string
+		old         string
+		new         string
+		wantAdded   bool
+		wantRemoved bool
+	}{
+		{
+			name:      "identical",
+			old:       "hello\nworld",
+			new:       "hello\nworld",
+			wantAdded: false, wantRemoved: false,
+		},
+		{
+			name:      "line added",
+			old:       "hello",
+			new:       "hello\nworld",
+			wantAdded: true, wantRemoved: false,
+		},
+		{
+			name:      "line removed",
+			old:       "hello\nworld",
+			new:       "hello",
+			wantAdded: false, wantRemoved: true,
+		},
+		{
+			name:      "line changed",
+			old:       "hello\nworld",
+			new:       "hello\nearth",
+			wantAdded: true, wantRemoved: true,
+		},
+		{
+			name:      "empty to content",
+			old:       "",
+			new:       "hello",
+			wantAdded: true, wantRemoved: true, // empty string splits to [""], which shows as removed
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := lineDiff(tt.old, tt.new)
+
+			hasAdded := strings.Contains(result, "+ ")
+			hasRemoved := strings.Contains(result, "- ")
+
+			if hasAdded != tt.wantAdded {
+				t.Errorf("added lines: expected %v, got %v\ndiff:\n%s", tt.wantAdded, hasAdded, result)
+			}
+			if hasRemoved != tt.wantRemoved {
+				t.Errorf("removed lines: expected %v, got %v\ndiff:\n%s", tt.wantRemoved, hasRemoved, result)
+			}
+		})
+	}
+}
+
+func TestGetLatestVersionNumber_NoVersions(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	noteID := createTestNote(t, "No Versions", "Content", nil)
+
+	verNum, err := getLatestVersionNumber(ctx, noteID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if verNum != 0 {
+		t.Errorf("expected 0 for no versions, got %d", verNum)
+	}
+}
+
+// ============================================================================
+// Daily Notes Tests
+// ============================================================================
+
+func TestGetOrCreateDailyNote(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// First call creates the note
+	note1, err := getOrCreateDailyNote(ctx, "2026-02-17")
+	if err != nil {
+		t.Fatalf("failed to create daily note: %v", err)
+	}
+	if note1.Title != "2026-02-17" {
+		t.Errorf("expected title '2026-02-17', got %q", note1.Title)
+	}
+
+	// Verify tagged as "daily"
+	tags, _ := database.GetTagsForNote(ctx, note1.ID)
+	found := false
+	for _, tag := range tags {
+		if tag.Name == "daily" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected 'daily' tag on daily note")
+	}
+
+	// Second call returns the same note
+	note2, err := getOrCreateDailyNote(ctx, "2026-02-17")
+	if err != nil {
+		t.Fatalf("failed to get daily note: %v", err)
+	}
+	if note2.ID != note1.ID {
+		t.Errorf("expected same note ID %d, got %d", note1.ID, note2.ID)
+	}
+}
+
+func TestGetOrCreateDailyFolder(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// First call creates folder
+	id1, err := getOrCreateDailyFolder(ctx)
+	if err != nil {
+		t.Fatalf("failed to create folder: %v", err)
+	}
+	if id1 == 0 {
+		t.Error("expected non-zero folder ID")
+	}
+
+	// Second call returns same folder
+	id2, err := getOrCreateDailyFolder(ctx)
+	if err != nil {
+		t.Fatalf("failed to get folder: %v", err)
+	}
+	if id2 != id1 {
+		t.Errorf("expected same folder ID %d, got %d", id1, id2)
+	}
+}
+
+// ============================================================================
+// Link Health Tests
+// ============================================================================
+
+func TestOrphanAndDeadEndDetection(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create notes
+	orphanID := createTestNote(t, "Orphan", "No links", nil)
+	sourceID := createTestNote(t, "Source", "Links to [[Target]]", nil)
+	targetID := createTestNote(t, "Target", "No outgoing links", nil)
+
+	// Create link: source -> target
+	err := database.CreateNoteLink(ctx, db.CreateNoteLinkParams{
+		SourceNoteID: sourceID,
+		TargetNoteID: targetID,
+		LinkText:     "Target",
+	})
+	if err != nil {
+		t.Fatalf("failed to create link: %v", err)
+	}
+
+	// Test orphans (no links in or out)
+	orphans, err := database.GetOrphanNotes(ctx)
+	if err != nil {
+		t.Fatalf("failed to get orphans: %v", err)
+	}
+	foundOrphan := false
+	for _, n := range orphans {
+		if n.ID == orphanID {
+			foundOrphan = true
+		}
+		if n.ID == sourceID || n.ID == targetID {
+			t.Errorf("linked note %d should not be an orphan", n.ID)
+		}
+	}
+	if !foundOrphan {
+		t.Error("expected 'Orphan' note to be detected as orphan")
+	}
+
+	// Test deadends (incoming links, no outgoing)
+	deadends, err := database.GetDeadEndNotes(ctx)
+	if err != nil {
+		t.Fatalf("failed to get deadends: %v", err)
+	}
+	foundDeadend := false
+	for _, n := range deadends {
+		if n.ID == targetID {
+			foundDeadend = true
+		}
+	}
+	if !foundDeadend {
+		t.Error("expected 'Target' note to be a dead-end")
+	}
+
+	// Test backlinks
+	backlinks, err := database.GetBacklinks(ctx, targetID)
+	if err != nil {
+		t.Fatalf("failed to get backlinks: %v", err)
+	}
+	if len(backlinks) != 1 {
+		t.Errorf("expected 1 backlink, got %d", len(backlinks))
+	}
+	if len(backlinks) > 0 && backlinks[0].ID != sourceID {
+		t.Errorf("expected backlink from source, got %d", backlinks[0].ID)
+	}
+}
+
+func TestWikilinkRegex(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []string
+	}{
+		{"[[Note Title]]", []string{"Note Title"}},
+		{"Link to [[A]] and [[B]]", []string{"A", "B"}},
+		{"No links here", nil},
+		{"[[]]", nil}, // empty link
+		{"[[Nested [[link]]]]", []string{"Nested [[link"}}, // greedy match
+	}
+
+	for _, tt := range tests {
+		matches := wikilinkRe.FindAllStringSubmatch(tt.input, -1)
+		var got []string
+		for _, m := range matches {
+			got = append(got, m[1])
+		}
+
+		if len(got) != len(tt.want) {
+			t.Errorf("input %q: expected %v, got %v", tt.input, tt.want, got)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("input %q match %d: expected %q, got %q", tt.input, i, tt.want[i], got[i])
+			}
+		}
+	}
+}

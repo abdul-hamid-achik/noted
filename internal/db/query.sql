@@ -212,3 +212,63 @@ UPDATE notes SET pinned = FALSE, pinned_at = NULL WHERE id = ?;
 
 -- name: GetPinnedNotes :many
 SELECT * FROM notes WHERE pinned = TRUE ORDER BY pinned_at DESC;
+
+-- Templates --
+
+-- name: CreateTemplate :one
+INSERT INTO templates (name, content) VALUES (?, ?) RETURNING *;
+
+-- name: GetTemplate :one
+SELECT * FROM templates WHERE id = ?;
+
+-- name: GetTemplateByName :one
+SELECT * FROM templates WHERE name = ?;
+
+-- name: ListTemplates :many
+SELECT * FROM templates ORDER BY name;
+
+-- name: UpdateTemplate :one
+UPDATE templates SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? RETURNING *;
+
+-- name: DeleteTemplate :exec
+DELETE FROM templates WHERE id = ?;
+
+-- name: DeleteTemplateByName :exec
+DELETE FROM templates WHERE name = ?;
+
+-- Note Versions --
+
+-- name: CreateNoteVersion :one
+INSERT INTO note_versions (note_id, title, content, version_number)
+VALUES (?, ?, ?, ?)
+RETURNING *;
+
+-- name: GetNoteVersions :many
+SELECT * FROM note_versions
+WHERE note_id = ?
+ORDER BY version_number DESC;
+
+-- name: GetNoteVersion :one
+SELECT * FROM note_versions
+WHERE note_id = ? AND version_number = ?;
+
+-- name: GetLatestVersionNumber :one
+SELECT COALESCE(MAX(version_number), 0) FROM note_versions
+WHERE note_id = ?;
+
+-- name: DeleteNoteVersions :exec
+DELETE FROM note_versions WHERE note_id = ?;
+
+-- Link health queries
+
+-- name: GetOrphanNotes :many
+SELECT * FROM notes
+WHERE id NOT IN (SELECT source_note_id FROM note_links)
+AND id NOT IN (SELECT target_note_id FROM note_links)
+ORDER BY title;
+
+-- name: GetDeadEndNotes :many
+SELECT * FROM notes
+WHERE id IN (SELECT target_note_id FROM note_links)
+AND id NOT IN (SELECT source_note_id FROM note_links)
+ORDER BY title;

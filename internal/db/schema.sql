@@ -61,3 +61,27 @@ CREATE TABLE IF NOT EXISTS note_links (
 
 CREATE INDEX IF NOT EXISTS idx_note_links_source ON note_links(source_note_id);
 CREATE INDEX IF NOT EXISTS idx_note_links_target ON note_links(target_note_id);
+
+-- Templates table
+CREATE TABLE IF NOT EXISTS templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  content TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_templates_name ON templates(name);
+
+-- Note versions table (version history)
+CREATE TABLE IF NOT EXISTS note_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  version_number INTEGER NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_versions_note_id ON note_versions(note_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_note_versions_unique ON note_versions(note_id, version_number);
