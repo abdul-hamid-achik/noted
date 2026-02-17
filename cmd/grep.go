@@ -30,16 +30,22 @@ var grepCmd = &cobra.Command{
 			return fmt.Errorf("limit must be at least 1")
 		}
 
-		// SQLite LIKE is case-insensitive for ASCII by default
-		// For Unicode case-insensitivity, we'd need COLLATE NOCASE or application-level filtering
-		searchPattern := "%" + pattern + "%"
-
 		ctx := context.Background()
-		notes, err := database.SearchNotesContent(ctx, db.SearchNotesContentParams{
-			Content: searchPattern,
-			Title:   searchPattern,
-			Limit:   int64(limit),
-		})
+
+		// Try FTS5 first, fall back to LIKE
+		var notes []db.Note
+		var err error
+		if db.FTSAvailable(ctx, conn) {
+			notes, err = db.SearchNotesFTS(ctx, conn, pattern, int64(limit))
+		}
+		if notes == nil || err != nil {
+			searchPattern := "%" + pattern + "%"
+			notes, err = database.SearchNotesContent(ctx, db.SearchNotesContentParams{
+				Content: searchPattern,
+				Title:   searchPattern,
+				Limit:   int64(limit),
+			})
+		}
 		if err != nil {
 			return err
 		}

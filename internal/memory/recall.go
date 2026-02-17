@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -10,7 +11,7 @@ import (
 )
 
 // Recall searches for memories matching the query
-func Recall(ctx context.Context, queries *db.Queries, syncer *veclite.Syncer, input RecallInput) (*RecallResult, error) {
+func Recall(ctx context.Context, queries *db.Queries, conn *sql.DB, syncer *veclite.Syncer, input RecallInput) (*RecallResult, error) {
 	if input.Query == "" {
 		return nil, fmt.Errorf("query is required")
 	}
@@ -39,13 +40,20 @@ func Recall(ctx context.Context, queries *db.Queries, syncer *veclite.Syncer, in
 		}
 	}
 
-	// Fallback to keyword search
-	pattern := "%" + input.Query + "%"
-	notes, err := queries.SearchNotesContent(ctx, db.SearchNotesContentParams{
-		Content: pattern,
-		Title:   pattern,
-		Limit:   int64(limit * 2),
-	})
+	// Fallback: try FTS5 first, then LIKE
+	var notes []db.Note
+	var err error
+	if conn != nil && db.FTSAvailable(ctx, conn) {
+		notes, err = db.SearchNotesFTS(ctx, conn, input.Query, int64(limit*2))
+	}
+	if notes == nil || err != nil {
+		pattern := "%" + input.Query + "%"
+		notes, err = queries.SearchNotesContent(ctx, db.SearchNotesContentParams{
+			Content: pattern,
+			Title:   pattern,
+			Limit:   int64(limit * 2),
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
 	}

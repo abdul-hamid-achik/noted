@@ -20,6 +20,18 @@ func Open(path string) (*sql.DB, error) {
 		return nil, err
 	}
 
+	// Enable WAL mode for better concurrent read performance
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
+	}
+
+	// Set busy timeout for concurrent access
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
+	}
+
 	// Enable foreign keys (must be done on every connection)
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()

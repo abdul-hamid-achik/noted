@@ -85,16 +85,13 @@ func NewServer(queries *db.Queries, conn *sql.DB) *Server {
 	}
 }
 
+// Handler returns the HTTP handler for testing.
+func (s *Server) Handler() http.Handler {
+	return s.routes()
+}
+
 // Run starts the HTTP server and blocks until shutdown.
 func (s *Server) Run(ctx context.Context, addr string) error {
-	// Enable WAL mode for better concurrent read performance
-	if _, err := s.conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		s.logger.Warn("failed to enable WAL mode", "error", err)
-	}
-	if _, err := s.conn.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		s.logger.Warn("failed to set busy timeout", "error", err)
-	}
-
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      s.routes(),
@@ -605,12 +602,20 @@ func (s *Server) handleSearchNotes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	pattern := "%" + query + "%"
-	notes, err := s.queries.SearchNotesContent(ctx, db.SearchNotesContentParams{
-		Content: pattern,
-		Title:   pattern,
-		Limit:   limit,
-	})
+	// Try FTS5 first, fall back to LIKE
+	var notes []db.Note
+	var err error
+	if db.FTSAvailable(ctx, s.conn) {
+		notes, err = db.SearchNotesFTS(ctx, s.conn, query, limit)
+	}
+	if notes == nil || err != nil {
+		pattern := "%" + query + "%"
+		notes, err = s.queries.SearchNotesContent(ctx, db.SearchNotesContentParams{
+			Content: pattern,
+			Title:   pattern,
+			Limit:   limit,
+		})
+	}
 	if err != nil {
 		s.logger.Error("failed to search notes", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "failed to search notes")

@@ -64,7 +64,7 @@ Examples:
 		}
 
 		ctx := context.Background()
-		result, err := memory.Recall(ctx, database, syncer, memory.RecallInput{
+		result, err := memory.Recall(ctx, database, conn, syncer, memory.RecallInput{
 			Query:       query,
 			Limit:       limit,
 			Category:    category,

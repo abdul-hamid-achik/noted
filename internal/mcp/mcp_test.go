@@ -53,7 +53,7 @@ func (m *mockSyncer) Close() error {
 }
 
 // setupTestDB creates an in-memory test database
-func setupTestDB(t *testing.T) (*db.Queries, func()) {
+func setupTestDB(t *testing.T) (*db.Queries, *sql.DB, func()) {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -70,7 +70,7 @@ func setupTestDB(t *testing.T) (*db.Queries, func()) {
 		conn.Close()
 	}
 
-	return queries, cleanup
+	return queries, conn, cleanup
 }
 
 // createTestNote creates a note for testing
@@ -127,11 +127,11 @@ func parseResultJSON(t *testing.T, result *mcp.CallToolResult) map[string]any {
 // ============================================================================
 
 func TestNewServer(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	// Without syncer
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	if server == nil {
 		t.Error("expected non-nil server")
 	}
@@ -141,7 +141,7 @@ func TestNewServer(t *testing.T) {
 
 	// With syncer
 	syncer := newMockSyncer()
-	server = NewServer(queries, syncer)
+	server = NewServer(queries, conn, syncer)
 	if !server.HasSemanticSearch() {
 		t.Error("expected semantic search with syncer")
 	}
@@ -152,10 +152,10 @@ func TestNewServer(t *testing.T) {
 // ============================================================================
 
 func TestToolCreate_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolCreate(ctx, createInput{
@@ -185,10 +185,10 @@ func TestToolCreate_Success(t *testing.T) {
 }
 
 func TestToolCreate_MissingTitle(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolCreate(ctx, createInput{
@@ -201,10 +201,10 @@ func TestToolCreate_MissingTitle(t *testing.T) {
 }
 
 func TestToolCreate_MissingContent(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolCreate(ctx, createInput{
@@ -217,11 +217,11 @@ func TestToolCreate_MissingContent(t *testing.T) {
 }
 
 func TestToolCreate_WithSyncer(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	syncer := newMockSyncer()
-	server := NewServer(queries, syncer)
+	server := NewServer(queries, conn, syncer)
 	ctx := context.Background()
 
 	result, _, _ := server.toolCreate(ctx, createInput{
@@ -244,10 +244,10 @@ func TestToolCreate_WithSyncer(t *testing.T) {
 // ============================================================================
 
 func TestToolList_Empty(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolList(ctx, listInput{})
@@ -263,14 +263,14 @@ func TestToolList_Empty(t *testing.T) {
 }
 
 func TestToolList_WithNotes(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	createTestNote(t, queries, "Note 1", "Content 1", nil)
 	createTestNote(t, queries, "Note 2", "Content 2", nil)
 	createTestNote(t, queries, "Note 3", "Content 3", nil)
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolList(ctx, listInput{Limit: 10})
@@ -286,13 +286,13 @@ func TestToolList_WithNotes(t *testing.T) {
 }
 
 func TestToolList_WithTagFilter(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	createTestNote(t, queries, "Go Note", "Content", []string{"go"})
 	createTestNote(t, queries, "Python Note", "Content", []string{"python"})
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolList(ctx, listInput{Tag: "go"})
@@ -304,14 +304,14 @@ func TestToolList_WithTagFilter(t *testing.T) {
 }
 
 func TestToolList_Pagination(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	for i := 1; i <= 5; i++ {
 		createTestNote(t, queries, "Note", "Content", nil)
 	}
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	// First page
@@ -336,12 +336,12 @@ func TestToolList_Pagination(t *testing.T) {
 // ============================================================================
 
 func TestToolGet_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	noteID := createTestNote(t, queries, "Get Test", "Content", []string{"tag1"})
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolGet(ctx, getInput{ID: noteID})
@@ -360,10 +360,10 @@ func TestToolGet_Success(t *testing.T) {
 }
 
 func TestToolGet_NotFound(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolGet(ctx, getInput{ID: 999})
@@ -383,13 +383,13 @@ func TestToolGet_NotFound(t *testing.T) {
 // ============================================================================
 
 func TestToolSearch_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	createTestNote(t, queries, "Go Tutorial", "Learn Go programming", nil)
 	createTestNote(t, queries, "Python Guide", "Python basics", nil)
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolSearch(ctx, searchInput{Query: "Go"})
@@ -401,10 +401,10 @@ func TestToolSearch_Success(t *testing.T) {
 }
 
 func TestToolSearch_EmptyQuery(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolSearch(ctx, searchInput{Query: ""})
@@ -415,12 +415,12 @@ func TestToolSearch_EmptyQuery(t *testing.T) {
 }
 
 func TestToolSearch_NoResults(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	createTestNote(t, queries, "Test", "Content", nil)
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolSearch(ctx, searchInput{Query: "nonexistent"})
@@ -436,12 +436,12 @@ func TestToolSearch_NoResults(t *testing.T) {
 // ============================================================================
 
 func TestToolUpdate_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	noteID := createTestNote(t, queries, "Original", "Original content", nil)
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolUpdate(ctx, updateInput{
@@ -465,12 +465,12 @@ func TestToolUpdate_Success(t *testing.T) {
 }
 
 func TestToolUpdate_PartialUpdate(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	noteID := createTestNote(t, queries, "Original Title", "Original content", nil)
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	// Only update title
@@ -493,10 +493,10 @@ func TestToolUpdate_PartialUpdate(t *testing.T) {
 }
 
 func TestToolUpdate_NotFound(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolUpdate(ctx, updateInput{
@@ -510,12 +510,12 @@ func TestToolUpdate_NotFound(t *testing.T) {
 }
 
 func TestToolUpdate_Tags(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	noteID := createTestNote(t, queries, "Test", "Content", []string{"old1", "old2"})
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolUpdate(ctx, updateInput{
@@ -550,12 +550,12 @@ func TestToolUpdate_Tags(t *testing.T) {
 // ============================================================================
 
 func TestToolDelete_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	noteID := createTestNote(t, queries, "To Delete", "Content", nil)
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolDelete(ctx, deleteInput{ID: noteID})
@@ -572,10 +572,10 @@ func TestToolDelete_Success(t *testing.T) {
 }
 
 func TestToolDelete_NotFound(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolDelete(ctx, deleteInput{ID: 999})
@@ -586,7 +586,7 @@ func TestToolDelete_NotFound(t *testing.T) {
 }
 
 func TestToolDelete_WithSyncer(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	syncer := newMockSyncer()
@@ -594,7 +594,7 @@ func TestToolDelete_WithSyncer(t *testing.T) {
 
 	noteID := createTestNote(t, queries, "To Delete", "Content", nil)
 
-	server := NewServer(queries, syncer)
+	server := NewServer(queries, conn, syncer)
 	ctx := context.Background()
 
 	result, _, _ := server.toolDelete(ctx, deleteInput{ID: noteID})
@@ -614,10 +614,10 @@ func TestToolDelete_WithSyncer(t *testing.T) {
 // ============================================================================
 
 func TestToolTags_Empty(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolTags(ctx)
@@ -629,13 +629,13 @@ func TestToolTags_Empty(t *testing.T) {
 }
 
 func TestToolTags_WithCounts(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	createTestNote(t, queries, "Note 1", "Content", []string{"shared", "unique1"})
 	createTestNote(t, queries, "Note 2", "Content", []string{"shared", "unique2"})
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolTags(ctx)
@@ -662,10 +662,10 @@ func TestToolTags_WithCounts(t *testing.T) {
 // ============================================================================
 
 func TestToolRemember_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolRemember(ctx, rememberInput{
@@ -703,10 +703,10 @@ func TestToolRemember_Success(t *testing.T) {
 }
 
 func TestToolRemember_DefaultValues(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolRemember(ctx, rememberInput{
@@ -733,10 +733,10 @@ func TestToolRemember_DefaultValues(t *testing.T) {
 }
 
 func TestToolRemember_MissingContent(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolRemember(ctx, rememberInput{
@@ -753,7 +753,7 @@ func TestToolRemember_MissingContent(t *testing.T) {
 // ============================================================================
 
 func TestToolRecall_KeywordSearch(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	// Create a memory
@@ -769,7 +769,7 @@ func TestToolRecall_KeywordSearch(t *testing.T) {
 	tag3, _ := queries.CreateTag(ctx, "importance:3")
 	_ = queries.AddTagToNote(ctx, db.AddTagToNoteParams{NoteID: note.ID, TagID: tag3.ID})
 
-	server := NewServer(queries, nil) // No syncer - uses keyword search
+	server := NewServer(queries, conn, nil) // No syncer - uses keyword search
 	result, _, _ := server.toolRecall(ctx, recallInput{Query: "Go"})
 
 	data := parseResultJSON(t, result)
@@ -782,10 +782,10 @@ func TestToolRecall_KeywordSearch(t *testing.T) {
 }
 
 func TestToolRecall_EmptyQuery(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolRecall(ctx, recallInput{Query: ""})
@@ -800,7 +800,7 @@ func TestToolRecall_EmptyQuery(t *testing.T) {
 // ============================================================================
 
 func TestToolForget_DryRun(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	// Create memories
@@ -814,7 +814,7 @@ func TestToolForget_DryRun(t *testing.T) {
 	tag2, _ := queries.CreateTag(ctx, "importance:1")
 	_ = queries.AddTagToNote(ctx, db.AddTagToNoteParams{NoteID: note.ID, TagID: tag2.ID})
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	result, _, _ := server.toolForget(ctx, forgetInput{
 		ImportanceBelow: 3,
 		DryRun:          true,
@@ -836,7 +836,7 @@ func TestToolForget_DryRun(t *testing.T) {
 }
 
 func TestToolForget_ActualDelete(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	// Create memory
@@ -850,7 +850,7 @@ func TestToolForget_ActualDelete(t *testing.T) {
 	tag2, _ := queries.CreateTag(ctx, "importance:1")
 	_ = queries.AddTagToNote(ctx, db.AddTagToNoteParams{NoteID: note.ID, TagID: tag2.ID})
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	result, _, _ := server.toolForget(ctx, forgetInput{
 		ImportanceBelow: 3,
 		DryRun:          false,
@@ -873,10 +873,10 @@ func TestToolForget_ActualDelete(t *testing.T) {
 // ============================================================================
 
 func TestToolSync_NoSyncer(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil) // No syncer
+	server := NewServer(queries, conn, nil) // No syncer
 	ctx := context.Background()
 
 	result, _, _ := server.toolSync(ctx, syncInput{})
@@ -887,14 +887,14 @@ func TestToolSync_NoSyncer(t *testing.T) {
 }
 
 func TestToolSync_WithSyncer(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	// Create unsynced note
 	createTestNote(t, queries, "Unsynced", "Content", nil)
 
 	syncer := newMockSyncer()
-	server := NewServer(queries, syncer)
+	server := NewServer(queries, conn, syncer)
 	ctx := context.Background()
 
 	result, _, _ := server.toolSync(ctx, syncInput{Force: false})
@@ -914,10 +914,10 @@ func TestToolSync_WithSyncer(t *testing.T) {
 // ============================================================================
 
 func TestToolSemanticSearch_NoSyncer(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolSemanticSearch(ctx, semanticSearchInput{Query: "test"})
@@ -928,11 +928,11 @@ func TestToolSemanticSearch_NoSyncer(t *testing.T) {
 }
 
 func TestToolSemanticSearch_EmptyQuery(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	syncer := newMockSyncer()
-	server := NewServer(queries, syncer)
+	server := NewServer(queries, conn, syncer)
 	ctx := context.Background()
 
 	result, _, _ := server.toolSemanticSearch(ctx, semanticSearchInput{Query: ""})
@@ -947,10 +947,10 @@ func TestToolSemanticSearch_EmptyQuery(t *testing.T) {
 // ============================================================================
 
 func TestSpecialCharactersInNotes(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	specialContent := "中文 émoji 🎉 <script> & \" ' ` $ \\ %"
@@ -971,10 +971,10 @@ func TestSpecialCharactersInNotes(t *testing.T) {
 }
 
 func TestVeryLongContent(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	// 100KB content
@@ -990,7 +990,7 @@ func TestVeryLongContent(t *testing.T) {
 }
 
 func TestDefaultLimitValues(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	// Create 25 notes
@@ -998,7 +998,7 @@ func TestDefaultLimitValues(t *testing.T) {
 		createTestNote(t, queries, "Note", "Content", nil)
 	}
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	// List without limit should default to 20
@@ -1015,10 +1015,10 @@ func TestDefaultLimitValues(t *testing.T) {
 // ============================================================================
 
 func TestToolDaily_CreateNew(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolDaily(ctx, dailyInput{Date: "2026-02-17"})
@@ -1034,10 +1034,10 @@ func TestToolDaily_CreateNew(t *testing.T) {
 }
 
 func TestToolDaily_GetExisting(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	// Create daily note
@@ -1056,10 +1056,10 @@ func TestToolDaily_GetExisting(t *testing.T) {
 }
 
 func TestToolDaily_Append(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	// Create then append
@@ -1077,10 +1077,10 @@ func TestToolDaily_Append(t *testing.T) {
 }
 
 func TestToolDaily_Prepend(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	// Create with content, then prepend
@@ -1098,10 +1098,10 @@ func TestToolDaily_Prepend(t *testing.T) {
 }
 
 func TestToolDaily_InvalidDate(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolDaily(ctx, dailyInput{Date: "not-a-date"})
@@ -1112,10 +1112,10 @@ func TestToolDaily_InvalidDate(t *testing.T) {
 }
 
 func TestToolDailyList(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	// Create a few daily notes
@@ -1141,10 +1141,10 @@ func TestToolDailyList(t *testing.T) {
 // ============================================================================
 
 func TestToolTemplateCreate_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolTemplateCreate(ctx, templateCreateInput{
@@ -1163,10 +1163,10 @@ func TestToolTemplateCreate_Success(t *testing.T) {
 }
 
 func TestToolTemplateCreate_MissingName(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolTemplateCreate(ctx, templateCreateInput{Content: "content"})
@@ -1177,10 +1177,10 @@ func TestToolTemplateCreate_MissingName(t *testing.T) {
 }
 
 func TestToolTemplateList(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	// Create templates
@@ -1196,10 +1196,10 @@ func TestToolTemplateList(t *testing.T) {
 }
 
 func TestToolTemplateGet_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	queries.CreateTemplate(ctx, db.CreateTemplateParams{Name: "test", Content: "template content"})
@@ -1213,10 +1213,10 @@ func TestToolTemplateGet_Success(t *testing.T) {
 }
 
 func TestToolTemplateGet_NotFound(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolTemplateGet(ctx, templateGetInput{Name: "nonexistent"})
@@ -1227,10 +1227,10 @@ func TestToolTemplateGet_NotFound(t *testing.T) {
 }
 
 func TestToolTemplateDelete(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	queries.CreateTemplate(ctx, db.CreateTemplateParams{Name: "delete-me", Content: "content"})
@@ -1249,10 +1249,10 @@ func TestToolTemplateDelete(t *testing.T) {
 }
 
 func TestToolTemplateApply(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	queries.CreateTemplate(ctx, db.CreateTemplateParams{
@@ -1286,10 +1286,10 @@ func TestToolTemplateApply(t *testing.T) {
 }
 
 func TestToolTemplateApply_NotFound(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolTemplateApply(ctx, templateApplyInput{
@@ -1307,10 +1307,10 @@ func TestToolTemplateApply_NotFound(t *testing.T) {
 // ============================================================================
 
 func TestToolTasks_ExtractAll(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	createTestNote(t, queries, "Todo", "- [ ] Task A\n- [x] Task B\n- [ ] Task C", nil)
@@ -1330,10 +1330,10 @@ func TestToolTasks_ExtractAll(t *testing.T) {
 }
 
 func TestToolTasks_FilterPending(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	createTestNote(t, queries, "Todo", "- [ ] Pending\n- [x] Done", nil)
@@ -1347,10 +1347,10 @@ func TestToolTasks_FilterPending(t *testing.T) {
 }
 
 func TestToolTasks_FilterByNote(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	noteID := createTestNote(t, queries, "Note A", "- [ ] Task A", nil)
@@ -1365,10 +1365,10 @@ func TestToolTasks_FilterByNote(t *testing.T) {
 }
 
 func TestToolTasks_FilterByTag(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	createTestNote(t, queries, "Work", "- [ ] Work task", []string{"work"})
@@ -1383,10 +1383,10 @@ func TestToolTasks_FilterByTag(t *testing.T) {
 }
 
 func TestToolTasks_NoTasks(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	createTestNote(t, queries, "No Tasks", "Just regular content", nil)
@@ -1404,10 +1404,10 @@ func TestToolTasks_NoTasks(t *testing.T) {
 // ============================================================================
 
 func TestToolHistory_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	noteID := createTestNote(t, queries, "Test", "Content", nil)
@@ -1429,10 +1429,10 @@ func TestToolHistory_Success(t *testing.T) {
 }
 
 func TestToolHistory_NotFound(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolHistory(ctx, historyInput{NoteID: 999})
@@ -1443,10 +1443,10 @@ func TestToolHistory_NotFound(t *testing.T) {
 }
 
 func TestToolVersionGet_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	noteID := createTestNote(t, queries, "Test", "Current", nil)
@@ -1467,10 +1467,10 @@ func TestToolVersionGet_Success(t *testing.T) {
 }
 
 func TestToolVersionGet_NotFound(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	noteID := createTestNote(t, queries, "Test", "Content", nil)
@@ -1487,10 +1487,10 @@ func TestToolVersionGet_NotFound(t *testing.T) {
 // ============================================================================
 
 func TestToolRestore_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	noteID := createTestNote(t, queries, "Current Title", "Current content", nil)
@@ -1523,10 +1523,10 @@ func TestToolRestore_Success(t *testing.T) {
 }
 
 func TestToolRestore_NoteNotFound(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolRestore(ctx, restoreInput{NoteID: 999, Version: 1})
@@ -1537,10 +1537,10 @@ func TestToolRestore_NoteNotFound(t *testing.T) {
 }
 
 func TestToolRestore_VersionNotFound(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	noteID := createTestNote(t, queries, "Test", "Content", nil)
@@ -1557,10 +1557,10 @@ func TestToolRestore_VersionNotFound(t *testing.T) {
 // ============================================================================
 
 func TestToolRandom_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	createTestNote(t, queries, "Note 1", "Content 1", nil)
@@ -1580,10 +1580,10 @@ func TestToolRandom_Success(t *testing.T) {
 }
 
 func TestToolRandom_WithTag(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	createTestNote(t, queries, "Go Note", "Content", []string{"go"})
@@ -1598,10 +1598,10 @@ func TestToolRandom_WithTag(t *testing.T) {
 }
 
 func TestToolRandom_Empty(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolRandom(ctx, randomInput{})
@@ -1616,10 +1616,10 @@ func TestToolRandom_Empty(t *testing.T) {
 // ============================================================================
 
 func TestToolBacklinks_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	sourceID := createTestNote(t, queries, "Source", "Links to target", nil)
@@ -1640,10 +1640,10 @@ func TestToolBacklinks_Success(t *testing.T) {
 }
 
 func TestToolBacklinks_NotFound(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolBacklinks(ctx, backlinksInput{NoteID: 999})
@@ -1658,10 +1658,10 @@ func TestToolBacklinks_NotFound(t *testing.T) {
 // ============================================================================
 
 func TestToolOrphans_Success(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	// Create orphan note
@@ -1692,10 +1692,10 @@ func TestToolOrphans_Success(t *testing.T) {
 }
 
 func TestToolOrphans_Empty(t *testing.T) {
-	queries, cleanup := setupTestDB(t)
+	queries, conn, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	server := NewServer(queries, nil)
+	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
 	result, _, _ := server.toolOrphans(ctx)

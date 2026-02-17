@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 
@@ -16,6 +17,7 @@ var Version = "dev"
 // Server handles MCP protocol using the official Go SDK.
 type Server struct {
 	queries *db.Queries
+	conn    *sql.DB
 	server  *mcp.Server
 	syncer  Syncer
 }
@@ -29,9 +31,10 @@ type Syncer interface {
 }
 
 // NewServer creates a new MCP server instance
-func NewServer(queries *db.Queries, syncer Syncer) *Server {
+func NewServer(queries *db.Queries, conn *sql.DB, syncer Syncer) *Server {
 	return &Server{
 		queries: queries,
+		conn:    conn,
 		syncer:  syncer,
 	}
 }

@@ -85,3 +85,11 @@ CREATE TABLE IF NOT EXISTS note_versions (
 
 CREATE INDEX IF NOT EXISTS idx_note_versions_note_id ON note_versions(note_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_note_versions_unique ON note_versions(note_id, version_number);
+
+-- FTS5 full-text search (external content from notes, kept in sync via triggers)
+CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+  title,
+  content,
+  content='notes',
+  content_rowid='id'
+);

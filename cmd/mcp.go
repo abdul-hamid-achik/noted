@@ -68,7 +68,7 @@ func runMCP(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create MCP server
-	server := notedmcp.NewServer(database, syncer)
+	server := notedmcp.NewServer(database, conn, syncer)
 
 	// Setup context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())

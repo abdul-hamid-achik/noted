@@ -512,13 +512,20 @@ func (s *Server) toolSearch(ctx context.Context, input searchInput) (*mcp.CallTo
 		limit = 20
 	}
 
-	// Use LIKE-based search
-	pattern := "%" + input.Query + "%"
-	notes, err := s.queries.SearchNotesContent(ctx, db.SearchNotesContentParams{
-		Content: pattern,
-		Title:   pattern,
-		Limit:   int64(limit),
-	})
+	// Try FTS5 first, fall back to LIKE
+	var notes []db.Note
+	var err error
+	if db.FTSAvailable(ctx, s.conn) {
+		notes, err = db.SearchNotesFTS(ctx, s.conn, input.Query, int64(limit))
+	}
+	if notes == nil || err != nil {
+		pattern := "%" + input.Query + "%"
+		notes, err = s.queries.SearchNotesContent(ctx, db.SearchNotesContentParams{
+			Content: pattern,
+			Title:   pattern,
+			Limit:   int64(limit),
+		})
+	}
 	if err != nil {
 		return errorResult(fmt.Sprintf("search failed: %v", err))
 	}
@@ -821,7 +828,7 @@ func (s *Server) toolRecall(ctx context.Context, input recallInput) (*mcp.CallTo
 		}
 	}
 
-	result, err := memory.Recall(ctx, s.queries, syncer, memory.RecallInput{
+	result, err := memory.Recall(ctx, s.queries, s.conn, syncer, memory.RecallInput{
 		Query:       input.Query,
 		Limit:       input.Limit,
 		Category:    input.Category,
