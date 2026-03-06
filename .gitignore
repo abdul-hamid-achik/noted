@@ -34,19 +34,5 @@ Thumbs.db
 .env
 .env.local
 
-# Frontend
-web/node_modules/
-web/dist/
-web/.vite/
-!web/dist/.gitkeep
-
-# Bun
-bun.lockb
-
-# TypeScript build cache
-*.tsbuildinfo
-web/vite.config.d.ts
-web/vite.config.js
-
 # Vecgrep
 .vecgrep/
