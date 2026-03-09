@@ -3,7 +3,6 @@ version: 2
 before:
   hooks:
     - go mod tidy
-    - bash -c "cd web && bun install && bun run build"
 
 builds:
   - id: noted
