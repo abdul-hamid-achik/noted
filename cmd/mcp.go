@@ -63,7 +63,7 @@ func runMCP(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "Semantic search will be disabled\n")
 		} else {
 			syncer = s
-			defer s.Close()
+			defer func() { _ = s.Close() }()
 		}
 	}
 

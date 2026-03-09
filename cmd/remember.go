@@ -68,7 +68,7 @@ Examples:
 		if err == nil && cfg.VeclitePath != "" {
 			syncer, _ = veclite.NewSyncer(cfg.VeclitePath, cfg.EmbeddingModel)
 			if syncer != nil {
-				defer syncer.Close()
+				defer func() { _ = syncer.Close() }()
 			}
 		}
 

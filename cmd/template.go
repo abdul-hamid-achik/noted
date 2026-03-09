@@ -166,7 +166,7 @@ var templateDeleteCmd = &cobra.Command{
 		if !force {
 			fmt.Printf("Delete template %q (#%d)? [y/N]: ", tmpl.Name, tmpl.ID)
 			var response string
-			fmt.Scanln(&response)
+			_, _ = fmt.Scanln(&response)
 			if response != "y" && response != "yes" {
 				fmt.Println("Aborted.")
 				return nil

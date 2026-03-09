@@ -29,7 +29,7 @@ func SearchNotesFTS(ctx context.Context, db *sql.DB, query string, limit int64) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var notes []Note
 	for rows.Next() {

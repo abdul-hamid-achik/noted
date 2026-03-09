@@ -16,7 +16,7 @@ func openTestDB(t *testing.T) (*sql.DB, string) {
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() { _ = conn.Close() })
 	return conn, dbPath
 }
 
@@ -29,7 +29,7 @@ func TestOpen_CreatesDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := os.Stat(nested); os.IsNotExist(err) {
 		t.Error("expected nested directory to be created")
@@ -110,13 +110,13 @@ func TestMigrations_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Open failed: %v", err)
 	}
-	conn1.Close()
+	_ = conn1.Close()
 
 	conn2, err := Open(dbPath)
 	if err != nil {
 		t.Fatalf("second Open failed: %v", err)
 	}
-	defer conn2.Close()
+	defer func() { _ = conn2.Close() }()
 }
 
 func TestFTS_SearchNotesFTS(t *testing.T) {
@@ -125,8 +125,8 @@ func TestFTS_SearchNotesFTS(t *testing.T) {
 	ctx := context.Background()
 
 	// Create notes
-	queries.CreateNote(ctx, CreateNoteParams{Title: "Go Tutorial", Content: "Learn Go programming"})
-	queries.CreateNote(ctx, CreateNoteParams{Title: "Python Guide", Content: "Python basics"})
+	_, _ = queries.CreateNote(ctx, CreateNoteParams{Title: "Go Tutorial", Content: "Learn Go programming"})
+	_, _ = queries.CreateNote(ctx, CreateNoteParams{Title: "Python Guide", Content: "Python basics"})
 
 	if !FTSAvailable(ctx, conn) {
 		t.Fatal("FTS5 should be available after migration")
@@ -152,7 +152,7 @@ func TestFTS_UpdateSync(t *testing.T) {
 	note, _ := queries.CreateNote(ctx, CreateNoteParams{Title: "Original", Content: "original content"})
 
 	// Update the note
-	queries.UpdateNote(ctx, UpdateNoteParams{ID: note.ID, Title: "Updated", Content: "updated content"})
+	_, _ = queries.UpdateNote(ctx, UpdateNoteParams{ID: note.ID, Title: "Updated", Content: "updated content"})
 
 	// Search for updated content
 	results, err := SearchNotesFTS(ctx, conn, "updated", 10)
@@ -181,7 +181,7 @@ func TestFTS_DeleteSync(t *testing.T) {
 	note, _ := queries.CreateNote(ctx, CreateNoteParams{Title: "To Delete", Content: "delete me"})
 
 	// Delete the note
-	queries.DeleteNote(ctx, note.ID)
+	_ = queries.DeleteNote(ctx, note.ID)
 
 	// Deleted content should not be found
 	results, err := SearchNotesFTS(ctx, conn, "delete", 10)

@@ -46,7 +46,7 @@ Examples:
 		if err != nil {
 			return fmt.Errorf("failed to query orphan notes: %w", err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		var items []orphanItem
 		for rows.Next() {
@@ -100,7 +100,7 @@ Examples:
 		if err != nil {
 			return fmt.Errorf("failed to query dead-end notes: %w", err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		var items []orphanItem
 		for rows.Next() {

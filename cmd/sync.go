@@ -61,7 +61,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize veclite: %w", err)
 	}
-	defer syncer.Close()
+	defer func() { _ = syncer.Close() }()
 
 	ctx := context.Background()
 

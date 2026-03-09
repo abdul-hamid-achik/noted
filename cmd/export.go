@@ -82,7 +82,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			w = f
 		}
 
@@ -175,27 +175,47 @@ func exportMarkdown(ctx context.Context, w io.Writer, notes []db.Note) error {
 		}
 
 		// YAML frontmatter
-		fmt.Fprintln(w, "---")
-		fmt.Fprintf(w, "title: %q\n", note.Title)
+		if _, err := fmt.Fprintln(w, "---"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "title: %q\n", note.Title); err != nil {
+			return err
+		}
 		if len(tagNames) > 0 {
 			// Quote each tag to handle special characters
 			quotedTags := make([]string, len(tagNames))
 			for i, tag := range tagNames {
 				quotedTags[i] = fmt.Sprintf("%q", tag)
 			}
-			fmt.Fprintf(w, "tags: [%s]\n", strings.Join(quotedTags, ", "))
+			if _, err := fmt.Fprintf(w, "tags: [%s]\n", strings.Join(quotedTags, ", ")); err != nil {
+				return err
+			}
 		}
-		fmt.Fprintf(w, "created: %s\n", note.CreatedAt.Time.Format("2006-01-02T15:04:05Z"))
-		fmt.Fprintf(w, "updated: %s\n", note.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"))
-		fmt.Fprintln(w, "---")
-		fmt.Fprintln(w)
-		fmt.Fprint(w, note.Content)
+		if _, err := fmt.Fprintf(w, "created: %s\n", note.CreatedAt.Time.Format("2006-01-02T15:04:05Z")); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "updated: %s\n", note.UpdatedAt.Time.Format("2006-01-02T15:04:05Z")); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w, "---"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprint(w, note.Content); err != nil {
+			return err
+		}
 		if len(note.Content) > 0 && note.Content[len(note.Content)-1] != '\n' {
-			fmt.Fprintln(w)
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
 		}
 
 		if i < len(notes)-1 {
-			fmt.Fprintln(w)
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
 		}
 	}
 

@@ -34,7 +34,7 @@ func setupTestDB(t *testing.T) func() {
 
 	return func() {
 		if conn != nil {
-			conn.Close()
+			_ = conn.Close()
 			conn = nil
 		}
 		database = nil
@@ -386,16 +386,16 @@ Content here`,
 func TestGetEditor(t *testing.T) {
 	// Save original
 	original := os.Getenv("EDITOR")
-	defer os.Setenv("EDITOR", original)
+	t.Cleanup(func() { _ = os.Setenv("EDITOR", original) })
 
 	// Test with EDITOR set
-	os.Setenv("EDITOR", "vim")
+	_ = os.Setenv("EDITOR", "vim")
 	if editor := getEditor(); editor != "vim" {
 		t.Errorf("expected 'vim', got %q", editor)
 	}
 
 	// Test with EDITOR unset
-	os.Unsetenv("EDITOR")
+	_ = os.Unsetenv("EDITOR")
 	if editor := getEditor(); editor != "nvim" {
 		t.Errorf("expected 'nvim' as default, got %q", editor)
 	}
@@ -1157,7 +1157,7 @@ func TestWikilinkRegex(t *testing.T) {
 		{"[[Note Title]]", []string{"Note Title"}},
 		{"Link to [[A]] and [[B]]", []string{"A", "B"}},
 		{"No links here", nil},
-		{"[[]]", nil}, // empty link
+		{"[[]]", nil},                                      // empty link
 		{"[[Nested [[link]]]]", []string{"Nested [[link"}}, // greedy match
 	}
 

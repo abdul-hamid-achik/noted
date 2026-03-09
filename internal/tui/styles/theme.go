@@ -86,20 +86,20 @@ var (
 			Foreground(MutedText).
 			Background(Surface)
 
-	SuccessStatus = StatusStyle.Copy().Foreground(Success)
-	ErrorStatus   = StatusStyle.Copy().Foreground(Error)
-	WarningStatus = StatusStyle.Copy().Foreground(Warning)
+	SuccessStatus = StatusStyle.Foreground(Success)
+	ErrorStatus   = StatusStyle.Foreground(Error)
+	WarningStatus = StatusStyle.Foreground(Warning)
 )
 
 var (
 	ListItemStyle = lipgloss.NewStyle().
 			Padding(0, 1)
 
-	SelectedItemStyle = ListItemStyle.Copy().
+	SelectedItemStyle = ListItemStyle.
 				Foreground(White).
 				Background(Primary)
 
-	HoverItemStyle = ListItemStyle.Copy().
+	HoverItemStyle = ListItemStyle.
 			Foreground(White).
 			Background(SurfaceAlt)
 
@@ -120,11 +120,11 @@ var (
 			Padding(0, 1).
 			MarginRight(1)
 
-	TagSelectedStyle = TagStyle.Copy().
+	TagSelectedStyle = TagStyle.
 				Foreground(White).
 				Background(Accent)
 
-	TagHoverStyle = TagStyle.Copy().
+	TagHoverStyle = TagStyle.
 			Foreground(White).
 			Background(SurfaceAlt)
 )
@@ -155,7 +155,7 @@ var (
 			BorderForeground(Border).
 			Padding(0, 1)
 
-	InputFocusedStyle = InputStyle.Copy().
+	InputFocusedStyle = InputStyle.
 				BorderForeground(Primary)
 
 	HelpKeyStyle = lipgloss.NewStyle().

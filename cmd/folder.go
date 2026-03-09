@@ -129,7 +129,7 @@ var folderDeleteCmd = &cobra.Command{
 		if !force {
 			fmt.Printf("Delete folder %q (#%d)? [y/N]: ", folder.Name, id)
 			var response string
-			fmt.Scanln(&response)
+			_, _ = fmt.Scanln(&response)
 			if response != "y" && response != "yes" {
 				fmt.Println("Aborted.")
 				return nil

@@ -67,7 +67,7 @@ func setupTestDB(t *testing.T) (*db.Queries, *sql.DB, func()) {
 	queries := db.New(conn)
 
 	cleanup := func() {
-		conn.Close()
+		_ = conn.Close()
 	}
 
 	return queries, conn, cleanup
@@ -1063,7 +1063,7 @@ func TestToolDaily_Append(t *testing.T) {
 	ctx := context.Background()
 
 	// Create then append
-	server.toolDaily(ctx, dailyInput{Date: "2026-02-17"})
+	_, _, _ = server.toolDaily(ctx, dailyInput{Date: "2026-02-17"})
 	result, _, _ := server.toolDaily(ctx, dailyInput{
 		Date:   "2026-02-17",
 		Append: "- [ ] Buy milk",
@@ -1084,7 +1084,7 @@ func TestToolDaily_Prepend(t *testing.T) {
 	ctx := context.Background()
 
 	// Create with content, then prepend
-	server.toolDaily(ctx, dailyInput{Date: "2026-02-17", Append: "Existing"})
+	_, _, _ = server.toolDaily(ctx, dailyInput{Date: "2026-02-17", Append: "Existing"})
 	result, _, _ := server.toolDaily(ctx, dailyInput{
 		Date:    "2026-02-17",
 		Prepend: "Prepended",
@@ -1119,9 +1119,9 @@ func TestToolDailyList(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a few daily notes
-	server.toolDaily(ctx, dailyInput{Date: "2026-02-15"})
-	server.toolDaily(ctx, dailyInput{Date: "2026-02-16"})
-	server.toolDaily(ctx, dailyInput{Date: "2026-02-17"})
+	_, _, _ = server.toolDaily(ctx, dailyInput{Date: "2026-02-15"})
+	_, _, _ = server.toolDaily(ctx, dailyInput{Date: "2026-02-16"})
+	_, _, _ = server.toolDaily(ctx, dailyInput{Date: "2026-02-17"})
 
 	result, _, _ := server.toolDailyList(ctx, dailyListInput{})
 
@@ -1184,8 +1184,8 @@ func TestToolTemplateList(t *testing.T) {
 	ctx := context.Background()
 
 	// Create templates
-	queries.CreateTemplate(ctx, db.CreateTemplateParams{Name: "a-meeting", Content: "meeting"})
-	queries.CreateTemplate(ctx, db.CreateTemplateParams{Name: "b-daily", Content: "daily"})
+	_, _ = queries.CreateTemplate(ctx, db.CreateTemplateParams{Name: "a-meeting", Content: "meeting"})
+	_, _ = queries.CreateTemplate(ctx, db.CreateTemplateParams{Name: "b-daily", Content: "daily"})
 
 	result, _, _ := server.toolTemplateList(ctx)
 
@@ -1202,7 +1202,7 @@ func TestToolTemplateGet_Success(t *testing.T) {
 	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
-	queries.CreateTemplate(ctx, db.CreateTemplateParams{Name: "test", Content: "template content"})
+	_, _ = queries.CreateTemplate(ctx, db.CreateTemplateParams{Name: "test", Content: "template content"})
 
 	result, _, _ := server.toolTemplateGet(ctx, templateGetInput{Name: "test"})
 
@@ -1233,7 +1233,7 @@ func TestToolTemplateDelete(t *testing.T) {
 	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
-	queries.CreateTemplate(ctx, db.CreateTemplateParams{Name: "delete-me", Content: "content"})
+	_, _ = queries.CreateTemplate(ctx, db.CreateTemplateParams{Name: "delete-me", Content: "content"})
 
 	result, _, _ := server.toolTemplateDelete(ctx, templateDeleteInput{Name: "delete-me"})
 
@@ -1255,7 +1255,7 @@ func TestToolTemplateApply(t *testing.T) {
 	server := NewServer(queries, conn, nil)
 	ctx := context.Background()
 
-	queries.CreateTemplate(ctx, db.CreateTemplateParams{
+	_, _ = queries.CreateTemplate(ctx, db.CreateTemplateParams{
 		Name:    "meeting",
 		Content: "# {{title}}\n\nDate: {{date}}\n",
 	})
@@ -1413,10 +1413,10 @@ func TestToolHistory_Success(t *testing.T) {
 	noteID := createTestNote(t, queries, "Test", "Content", nil)
 
 	// Create versions
-	queries.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
+	_, _ = queries.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
 		NoteID: noteID, Title: "v1", Content: "v1 content", VersionNumber: 1,
 	})
-	queries.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
+	_, _ = queries.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
 		NoteID: noteID, Title: "v2", Content: "v2 content", VersionNumber: 2,
 	})
 
@@ -1450,7 +1450,7 @@ func TestToolVersionGet_Success(t *testing.T) {
 	ctx := context.Background()
 
 	noteID := createTestNote(t, queries, "Test", "Current", nil)
-	queries.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
+	_, _ = queries.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
 		NoteID: noteID, Title: "Old", Content: "Old content", VersionNumber: 1,
 	})
 
@@ -1496,7 +1496,7 @@ func TestToolRestore_Success(t *testing.T) {
 	noteID := createTestNote(t, queries, "Current Title", "Current content", nil)
 
 	// Create a version representing the old state
-	queries.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
+	_, _ = queries.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
 		NoteID: noteID, Title: "Old Title", Content: "Old content", VersionNumber: 1,
 	})
 
@@ -1625,7 +1625,7 @@ func TestToolBacklinks_Success(t *testing.T) {
 	sourceID := createTestNote(t, queries, "Source", "Links to target", nil)
 	targetID := createTestNote(t, queries, "Target", "Content", nil)
 
-	queries.CreateNoteLink(ctx, db.CreateNoteLinkParams{
+	_ = queries.CreateNoteLink(ctx, db.CreateNoteLinkParams{
 		SourceNoteID: sourceID,
 		TargetNoteID: targetID,
 		LinkText:     "Target",
@@ -1670,7 +1670,7 @@ func TestToolOrphans_Success(t *testing.T) {
 	// Create linked notes
 	sourceID := createTestNote(t, queries, "Source", "Content", nil)
 	targetID := createTestNote(t, queries, "Target", "Content", nil)
-	queries.CreateNoteLink(ctx, db.CreateNoteLinkParams{
+	_ = queries.CreateNoteLink(ctx, db.CreateNoteLinkParams{
 		SourceNoteID: sourceID,
 		TargetNoteID: targetID,
 		LinkText:     "Target",

@@ -9,8 +9,8 @@ import (
 
 func TestLoad_DefaultPaths(t *testing.T) {
 	// Unset env vars that might interfere
-	os.Unsetenv("NOTED_VECLITE_PATH")
-	os.Unsetenv("NOTED_EMBEDDING_MODEL")
+	_ = os.Unsetenv("NOTED_VECLITE_PATH")
+	_ = os.Unsetenv("NOTED_EMBEDDING_MODEL")
 
 	cfg, err := Load()
 	if err != nil {

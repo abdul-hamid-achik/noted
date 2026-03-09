@@ -294,11 +294,6 @@ func lineDiff(old, new string) string {
 	var b strings.Builder
 
 	// Use a simple LCS-based approach for reasonable diffs
-	maxLen := len(oldLines)
-	if len(newLines) > maxLen {
-		maxLen = len(newLines)
-	}
-
 	i, j := 0, 0
 	for i < len(oldLines) || j < len(newLines) {
 		if i < len(oldLines) && j < len(newLines) && oldLines[i] == newLines[j] {

@@ -50,7 +50,7 @@ var rootCmd = &cobra.Command{
 
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
 		if conn != nil {
-			conn.Close()
+			_ = conn.Close()
 		}
 	},
 }

@@ -18,7 +18,7 @@ func setupMemoryTestDB(t *testing.T) (*db.Queries, *db.Note, func()) {
 		t.Fatalf("failed to open test database: %v", err)
 	}
 	queries := db.New(conn)
-	cleanup := func() { conn.Close() }
+	cleanup := func() { _ = conn.Close() }
 	return queries, nil, cleanup
 }
 
@@ -101,8 +101,7 @@ func TestRecall_Basic(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create a memory
-	Remember(ctx, queries, nil, RememberInput{
+	_, _ = Remember(ctx, queries, nil, RememberInput{
 		Content:  "Go is a programming language",
 		Title:    "Go facts",
 		Category: "fact",
@@ -140,11 +139,11 @@ func TestRecall_CategoryFilter(t *testing.T) {
 
 	ctx := context.Background()
 
-	Remember(ctx, queries, nil, RememberInput{
+	_, _ = Remember(ctx, queries, nil, RememberInput{
 		Content:  "User likes dark mode",
 		Category: "user-pref",
 	})
-	Remember(ctx, queries, nil, RememberInput{
+	_, _ = Remember(ctx, queries, nil, RememberInput{
 		Content:  "Project uses Go",
 		Category: "project",
 	})

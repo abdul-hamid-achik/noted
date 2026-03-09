@@ -57,13 +57,8 @@ const (
 
 // Style aliases for backward compatibility
 var (
-	primary   = styles.Primary
-	secondary = styles.Secondary
-	accent    = styles.Accent
-	success   = styles.Success
-	warning   = styles.Warning
-	errorCol  = styles.Error
-	info      = styles.Info
+	primary = styles.Primary
+	accent  = styles.Accent
 
 	background = styles.Background
 	surface    = styles.Surface
@@ -75,8 +70,6 @@ var (
 
 // Reusable style objects
 var (
-	baseStyle = styles.BaseStyle
-
 	titleStyle      = styles.TitleStyle
 	headingStyle    = styles.HeadingStyle
 	subheadingStyle = styles.SubheadingStyle
@@ -149,9 +142,7 @@ type Model struct {
 	editorModeField  *huh.Select[EditorMode]
 
 	// Navigation state for vim-style (g prefix)
-	pendingKey      string
-	showCommandLine bool
-	commandBuffer   string
+	pendingKey string
 
 	// Editor state
 	isCreating    bool
@@ -161,9 +152,6 @@ type Model struct {
 	editorDirty   bool
 	editorFocus   string // "title", "content", or "preview"
 	editorMode    EditorMode
-
-	// Delete confirmation
-	showDeleteConfirm bool
 
 	// Toast notifications
 	toastMessage string
@@ -327,7 +315,7 @@ type (
 	tagsLoadedMsg      struct{ tags []db.GetTagsWithCountRow }
 	foldersLoadedMsg   struct{ folders []db.Folder }
 	noteSavedMsg       struct{ note db.Note }
-	noteDeletedMsg     struct{ id int64 }
+	noteDeletedMsg     struct{}
 	searchResultsMsg   struct{ results []db.Note }
 	backlinksLoadedMsg struct{ backlinks []db.Note }
 	tasksLoadedMsg     struct{ tasks []Task }
@@ -1101,24 +1089,6 @@ func (m *Model) renderMarkdown(content string, width int) string {
 	return preview
 }
 
-func scrollIndicator(p float64) string {
-	if p < 0 {
-		p = 0
-	}
-	if p > 1 {
-		p = 1
-	}
-	const n = 10
-	filled := int(p * n)
-	if filled > n {
-		filled = n
-	}
-	if filled < 0 {
-		filled = 0
-	}
-	return "[" + strings.Repeat("=", filled) + strings.Repeat("-", n-filled) + "]"
-}
-
 // handleMouseMsg handles mouse events globally
 func (m *Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Delegate all mouse handling to the mouse handler
@@ -1218,9 +1188,9 @@ func (m Model) updateNotesView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Pin/unpin
 			if i, ok := m.noteList.SelectedItem().(NoteItem); ok {
 				if i.note.Pinned.Valid && i.note.Pinned.Bool {
-					m.db.UnpinNote(m.ctx, i.note.ID)
+					_ = m.db.UnpinNote(m.ctx, i.note.ID)
 				} else {
-					m.db.PinNote(m.ctx, i.note.ID)
+					_ = m.db.PinNote(m.ctx, i.note.ID)
 				}
 				return m, m.loadNotesCmd()
 			}
@@ -1279,7 +1249,8 @@ func (m Model) updateEditorView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.editorFocus == "title" {
+	switch m.editorFocus {
+	case "title":
 		previous := m.editorTitle
 		if m.editorTitleField != nil {
 			updated, c := m.editorTitleField.Update(msg)
@@ -1292,7 +1263,7 @@ func (m Model) updateEditorView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.editorDirty = true
 			m.editorBackArmed = false
 		}
-	} else if m.editorFocus == "mode" {
+	case "mode":
 		previous := m.editorMode
 		if m.editorModeField != nil {
 			updated, c := m.editorModeField.Update(msg)
@@ -1308,7 +1279,7 @@ func (m Model) updateEditorView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setEditorFocus("content")
 			}
 		}
-	} else if m.editorFocus == "content" {
+	case "content":
 		previous := m.editorContent
 		m.contentArea, cmd = m.contentArea.Update(msg)
 		m.editorContent = m.contentArea.Value()
@@ -1316,7 +1287,7 @@ func (m Model) updateEditorView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.editorDirty = true
 			m.editorBackArmed = false
 		}
-	} else if m.editorFocus == "preview" {
+	case "preview":
 		m.previewVP, cmd = m.previewVP.Update(msg)
 	}
 
@@ -1356,11 +1327,12 @@ func (m Model) updateEditorView(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.setEditorFocus("mode")
 				}
 			} else {
-				if m.editorFocus == "mode" {
+				switch m.editorFocus {
+				case "mode":
 					m.setEditorFocus("title")
-				} else if m.editorFocus == "title" {
+				case "title":
 					m.setEditorFocus("content")
-				} else {
+				default:
 					m.setEditorFocus("mode")
 				}
 			}
@@ -1994,7 +1966,7 @@ func (m Model) renderEditorLayout() string {
 	metaLine := strings.Join(metaParts, " | ")
 
 	tabStyle := lipgloss.NewStyle().Foreground(textCol).Background(surfaceAlt)
-	tabActive := tabStyle.Copy().Foreground(background).Background(primary).Bold(true)
+	tabActive := tabStyle.Foreground(background).Background(primary).Bold(true)
 	makeTab := func(label, focus string) string {
 		if m.editorFocus == focus {
 			return tabActive.Render(label)
@@ -2049,7 +2021,7 @@ func (m Model) renderEditorLayout() string {
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(border)
 	if m.editorFocus == "content" {
-		contentBorder = contentBorder.Copy().BorderForeground(primary)
+		contentBorder = contentBorder.BorderForeground(primary)
 	}
 
 	previewBorder := lipgloss.NewStyle().
@@ -2058,7 +2030,7 @@ func (m Model) renderEditorLayout() string {
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(border)
 	if m.editorFocus == "preview" {
-		previewBorder = previewBorder.Copy().BorderForeground(primary)
+		previewBorder = previewBorder.BorderForeground(primary)
 	}
 
 	contentStatus := lipgloss.NewStyle().Width(metrics.Content.W).Render(lipgloss.JoinHorizontal(lipgloss.Left, contentLabel, " ", contentBar))
@@ -2087,7 +2059,7 @@ func (m Model) renderEditorLayout() string {
 		Foreground(textCol).
 		Background(surfaceAlt).
 		Padding(0, 1)
-	buttonHot := buttonStyle.Copy().Background(accent).Foreground(background)
+	buttonHot := buttonStyle.Background(accent).Foreground(background)
 	action := func(label string, active bool) string {
 		if active {
 			return buttonHot.Width(metrics.Sidebar.W - 2).Render(label)
@@ -2610,7 +2582,7 @@ func renderGraphASCII(notes []db.Note, links []db.NoteLink, width, height int) s
 
 	// Convert grid to string
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Nodes: %d | Edges: %d\n\n", len(notes), len(links)))
+	fmt.Fprintf(&sb, "Nodes: %d | Edges: %d\n\n", len(notes), len(links))
 	for _, row := range grid {
 		sb.WriteString(string(row))
 		sb.WriteString("\n")

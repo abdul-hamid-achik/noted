@@ -27,15 +27,15 @@ func openEditorWithContent(initial string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	if initial != "" {
 		if _, err := tmpFile.WriteString(initial); err != nil {
-			tmpFile.Close()
+			_ = tmpFile.Close()
 			return "", err
 		}
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	cmd := exec.Command(editor, tmpFile.Name())
 	cmd.Stdin = os.Stdin

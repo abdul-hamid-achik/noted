@@ -328,11 +328,12 @@ func (mh *MouseHandler) handleEditorAction(mouse tea.Mouse, model *Model) (tea.M
 				model.setEditorFocus("mode")
 			}
 		} else {
-			if model.editorFocus == "mode" {
+			switch model.editorFocus {
+			case "mode":
 				model.setEditorFocus("title")
-			} else if model.editorFocus == "title" {
+			case "title":
 				model.setEditorFocus("content")
-			} else {
+			default:
 				model.setEditorFocus("mode")
 			}
 		}
