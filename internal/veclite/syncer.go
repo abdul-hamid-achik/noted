@@ -112,14 +112,29 @@ type Syncer struct {
 	embedder *OllamaEmbedder
 }
 
-// NewSyncer creates a new veclite syncer
+// NewSyncer creates a new veclite syncer.
 func NewSyncer(dbPath, embeddingModel string) (*Syncer, error) {
+	return newSyncer(dbPath, embeddingModel, false)
+}
+
+// NewSearcher creates a read-only syncer with a shared flock for search-only
+// paths. Use for `recall` so it doesn't block a concurrent `sync` or
+// `remember` that holds the exclusive lock.
+func NewSearcher(dbPath, embeddingModel string) (*Syncer, error) {
+	return newSyncer(dbPath, embeddingModel, true)
+}
+
+func newSyncer(dbPath, embeddingModel string, readOnly bool) (*Syncer, error) {
 	if embeddingModel == "" {
 		embeddingModel = defaultEmbeddingModel
 	}
 
 	// Open veclite database
-	db, err := veclite.Open(dbPath)
+	opts := []veclite.Option{}
+	if readOnly {
+		opts = append(opts, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
+	}
+	db, err := veclite.Open(dbPath, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open veclite database: %w", err)
 	}

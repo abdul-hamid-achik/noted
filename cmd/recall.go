@@ -57,7 +57,7 @@ Examples:
 		var syncer *veclite.Syncer
 		cfg, err := config.Load()
 		if err == nil && cfg.VeclitePath != "" {
-			syncer, _ = veclite.NewSyncer(cfg.VeclitePath, cfg.EmbeddingModel)
+			syncer, _ = veclite.NewSearcher(cfg.VeclitePath, cfg.EmbeddingModel)
 			if syncer != nil {
 				defer func() { _ = syncer.Close() }()
 			}
