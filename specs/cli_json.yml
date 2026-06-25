@@ -4,8 +4,8 @@ intent: |
   CLI commands support a --json flag for scripting; `list` and `stats` return valid JSON containing
   the seeded notes.
 target:
-  cmd: ["/bin/sh", "-c", "cd /Users/abdulachik/projects/noted && rm -f /tmp/noted-list.json /tmp/noted-stats.json; ./noted --db /tmp/noted-e2e.db list --json > /tmp/noted-list.json; ./noted --db /tmp/noted-e2e.db stats --json > /tmp/noted-stats.json; test -s /tmp/noted-list.json && test -s /tmp/noted-stats.json; echo done"]
-  cwd: "/Users/abdulachik/projects/noted"
+  cmd: ["/bin/sh", "-c", "./noted --db /tmp/noted-e2e.db list --json; ./noted --db /tmp/noted-e2e.db stats --json"]
+  cwd: "."
 terminal:
   cols: 120
   rows: 40
@@ -13,20 +13,18 @@ terminal:
   alternateScreen: forbid
 steps: []
 outcomes:
-  - id: list_json_valid
-    description: list --json is parseable JSON array and contains a seeded note
+  - id: list_json_emitted
+    description: list --json prints a JSON array with the seeded notes
     verify:
-      file:
-        glob: /tmp/noted-list.json
-        contains: "Welcome to noted"
-        timeoutMs: 5000
-  - id: stats_json_valid
-    description: stats --json is parseable JSON object with a note count
+      screen:
+        contains: '"Welcome to noted"'
+  - id: stats_json_emitted
+    description: stats --json prints a JSON object with note count
     verify:
-      file:
-        glob: /tmp/noted-stats.json
-        contains: "notes"
-        timeoutMs: 5000
-artifacts:
-  rawLog: always
-  finalScreen: always
+      screen:
+        contains: '"notes"'
+  - id: clean_exit
+    description: the combined CLI commands exit successfully
+    verify:
+      process:
+        exitCode: 0
