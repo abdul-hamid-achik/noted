@@ -1,0 +1,41 @@
+version: 1
+name: noted_editor_versions
+intent: |
+  Editing a note in the TUI editor and saving creates a version snapshot (history), just like the CLI
+  `edit` and MCP — and the snapshot is persisted to the vault under .noted/versions/ immediately.
+  Uses a dedicated db/vault so version numbers are deterministic regardless of other specs: create a
+  note containing a unique marker (creating makes no version), then edit it once — that save snapshots
+  the marker-bearing state as version 1, so .noted/versions/<id>/1.md must contain the marker.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-editorver.db", "--vault", "/tmp/noted-editorver-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Notes" }, timeoutMs: 8000 } # app ready (sidebar nav), empty db is fine
+  - press: "n" # new note → editor (creating), focus on title
+  - wait: { screen: { contains: "PREVIEW" }, timeoutMs: 3000 }
+  - type: "VerNote"
+  - press: "tab" # focus content
+  - type: "ZZMARKER"
+  - press: "ctrl+s" # create the note (creating → no version yet)
+  - wait: { screen: { contains: "saved" }, timeoutMs: 3000 }
+  - type: "QQ" # change content so the next save snapshots the marker-bearing state
+  - press: "ctrl+s" # update → version 1 = "ZZMARKER"
+  - wait: { screen: { contains: "saved" }, timeoutMs: 3000 }
+  - snapshot: after_edit
+  - press: "esc"
+  - wait: { screen: { contains: "n new" }, timeoutMs: 3000 } # back on the notes list
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: version_snapshot_in_vault
+    description: a TUI edit created version 1 from the marker-bearing state, persisted to the vault
+    verify:
+      file: { glob: "/tmp/noted-editorver-vault/.noted/versions/*/1.md", contains: "ZZMARKER", timeoutMs: 5000 }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

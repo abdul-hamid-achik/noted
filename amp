@@ -1,0 +1,18 @@
+specs/cli_json.yml: jsonschema validation failed with 'embedded://glyphrun.spec.v1.schema.json#'
+- at '/outcomes/0/verify/command': got string, want object
+- at '/outcomes/1/verify/command': got string, want object
+specs/cli_pin.yml: jsonschema validation failed with 'embedded://glyphrun.spec.v1.schema.json#'
+- at '/outcomes/0/verify/command': got string, want object
+- at '/outcomes/1/verify/command': got string, want object
+specs/vault_roundtrip.yml: jsonschema validation failed with 'embedded://glyphrun.spec.v1.schema.json#'
+- at '/outcomes/2/verify/command': got string, want object
+- at '/outcomes/3/verify/command': got string, want object
+specs/cli_json.yml: jsonschema validation failed with 'embedded://glyphrun.spec.v1.schema.json#'
+- at '/outcomes/0/verify/command': got string, want object
+- at '/outcomes/1/verify/command': got string, want object
+specs/cli_pin.yml: jsonschema validation failed with 'embedded://glyphrun.spec.v1.schema.json#'
+- at '/outcomes/0/verify/command': got string, want object
+- at '/outcomes/1/verify/command': got string, want object
+specs/vault_roundtrip.yml: jsonschema validation failed with 'embedded://glyphrun.spec.v1.schema.json#'
+- at '/outcomes/2/verify/command': got string, want object
+- at '/outcomes/3/verify/command': got string, want object

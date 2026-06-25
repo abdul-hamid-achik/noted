@@ -1,0 +1,29 @@
+version: 1
+name: noted_dashboard
+intent: |
+  The Dashboard view shows knowledge-base stat cards (notes, tags, folders, pinned, links, tasks).
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "8"                                                   # keyboard nav -> Dashboard
+  - wait: { screen: { contains: "Pinned" }, timeoutMs: 3000 }   # stat card (dashboard-only)
+  - wait: { screen: { contains: "Links" }, timeoutMs: 3000 }
+  - snapshot: dashboard
+  - press: "esc"
+  - wait: { screen: { contains: "n new" }, timeoutMs: 3000 }    # notes footer (robust marker)
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: back_on_notes
+    description: dashboard shows then returns to the notes list
+    verify: { screen: { contains: "Welcome to noted" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

@@ -1,0 +1,30 @@
+version: 1
+name: noted_settings
+intent: |
+  The Settings view shows read-only config (theme, database, vault, keybindings).
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "9"                                                   # keyboard nav -> Settings
+  - wait: { screen: { contains: "Nord (dark)" }, timeoutMs: 3000 }
+  - wait: { screen: { contains: "Database" }, timeoutMs: 3000 }
+  - snapshot: settings
+  - press: "esc"
+  # NOTE: the Settings view itself prints "n new" in its key help, so use a notes-list-only marker.
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 3000 }
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: shows_settings
+    description: settings shows the Nord theme line, then returns to the notes list
+    verify: { screen: { contains: "Welcome to noted" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

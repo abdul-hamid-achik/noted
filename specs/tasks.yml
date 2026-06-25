@@ -1,0 +1,33 @@
+version: 1
+name: noted_tasks
+intent: |
+  Tasks view lists markdown checkboxes extracted from notes; pressing space toggles a task's done
+  state (written back to the source note).
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "5"                                                   # keyboard nav -> Tasks view
+  - wait: { screen: { contains: "Write the vault layer" }, timeoutMs: 3000 }
+  - wait: { screen: { contains: "[x] Ship the editor" }, timeoutMs: 3000 }   # pre-existing done task
+  - snapshot: tasks_list
+  - press: "x"                                                  # toggle the first (pending) task
+  - wait: { screen: { contains: "[x] Write the vault layer" }, timeoutMs: 3000 }
+  - snapshot: task_toggled
+  - press: "x"                                                  # toggle it back to pending
+  - wait: { screen: { contains: "[ ] Write the vault layer" }, timeoutMs: 3000 }
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: toggle_round_trip
+    description: a pending task can be toggled done and back (persisted to the note)
+    verify: { screen: { contains: "[ ] Write the vault layer" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

@@ -1,0 +1,32 @@
+version: 1
+name: noted_help
+intent: |
+  Pressing ? in the TUI reveals the current view's keybindings in the footer/status bar, which is
+  dismissed on the next key and the user can still quit cleanly.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "/Users/abdulachik/projects/noted"
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "?"
+  - wait: { screen: { contains: "↑/↓" }, timeoutMs: 3000 }
+  - snapshot: help_status
+  - press: "down"
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 3000 }
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: help_visible
+    description: the footer/status bar shows the notes view keybindings after ?
+    verify: { screen: { contains: "↑/↓" } }
+  - id: help_dismissed
+    description: the help text disappears after another key and we are back on the notes list
+    verify: { screen: { contains: "Welcome to noted" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

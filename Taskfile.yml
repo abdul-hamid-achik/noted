@@ -1,93 +1,174 @@
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
+#
+# noted — task runner. Single-word commands only. Run `task` to list them.
+# Requires: go, glyph (glyphrun) for e2e. Optional: sqlc (generate), golangci-lint (lint).
 version: '3'
 
 vars:
-  BINARY_NAME: noted
-  BINARY_DIR: bin
+  BIN: noted
+  E2E_DB: /tmp/noted-e2e.db
+  DEMO_DB: /tmp/noted-demo.db
 
 tasks:
   default:
-    desc: Show available tasks
+    desc: List available tasks
     cmds:
       - task --list
-
-  generate:
-    desc: Generate sqlc code
-    cmds:
-      - sqlc generate
-    sources:
-      - sql/*.sql
-      - sqlc.yaml
-    generates:
-      - internal/db/*.go
+    silent: true
 
   build:
-    desc: Build the binary
-    deps: [generate]
+    desc: Build the ./noted binary
     vars:
       VERSION:
-        sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
       COMMIT:
-        sh: git rev-parse --short HEAD 2>/dev/null || echo "none"
-      BUILD_DATE:
+        sh: git rev-parse --short HEAD 2>/dev/null || echo none
+      DATE:
         sh: date -u +%Y-%m-%dT%H:%M:%SZ
     cmds:
-      - go build -ldflags "-X github.com/abdul-hamid-achik/noted/cmd.Version={{.VERSION}} -X github.com/abdul-hamid-achik/noted/cmd.Commit={{.COMMIT}} -X github.com/abdul-hamid-achik/noted/cmd.BuildDate={{.BUILD_DATE}}" -o {{.BINARY_DIR}}/{{.BINARY_NAME}} .
+      - go build -ldflags "-X github.com/abdul-hamid-achik/noted/cmd.Version={{.VERSION}} -X github.com/abdul-hamid-achik/noted/cmd.Commit={{.COMMIT}} -X github.com/abdul-hamid-achik/noted/cmd.BuildDate={{.DATE}}" -o {{.BIN}} .
     sources:
       - "**/*.go"
       - go.mod
       - go.sum
     generates:
-      - "{{.BINARY_DIR}}/{{.BINARY_NAME}}"
+      - "{{.BIN}}"
+
+  run:
+    desc: Build and launch the TUI (e.g. `task run -- --db /tmp/x.db`)
+    deps: [build]
+    interactive: true
+    cmds:
+      - ./{{.BIN}} {{.CLI_ARGS}}
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: Format all Go code with gofmt
+    cmds:
+      - gofmt -w .
+
+  lint:
+    desc: Run go vet plus golangci-lint when installed
+    cmds:
+      - go vet ./...
+      - cmd: |
+          if command -v golangci-lint >/dev/null 2>&1; then
+            golangci-lint run ./...
+          else
+            echo "golangci-lint not installed — ran go vet only (brew install golangci-lint)"
+          fi
+
+  tidy:
+    desc: Tidy go.mod / go.sum
+    cmds:
+      - go mod tidy
+
+  generate:
+    desc: Regenerate the sqlc database code
+    cmds:
+      - sqlc generate
+    sources:
+      - internal/db/schema.sql
+      - internal/db/query.sql
+      - sqlc.yaml
+    generates:
+      - internal/db/query.sql.go
+      - internal/db/models.go
+
+  seed:
+    desc: Build and seed an isolated e2e database with sample data
+    deps: [build]
+    cmds:
+      - cmd: |
+          set -e
+          DB="{{.E2E_DB}}"
+          export NOTED_VAULT=/tmp/noted-e2e-vault   # CLI write-through targets the e2e vault, not the real one
+          rm -f "$DB" "$DB-journal" "$DB-wal" "$DB-shm"
+          rm -rf /tmp/noted-e2e-vault
+          # editor_versions.yml uses its own isolated db+vault — wipe it so version numbers are deterministic
+          rm -f /tmp/noted-editorver.db /tmp/noted-editorver.db-journal /tmp/noted-editorver.db-wal /tmp/noted-editorver.db-shm
+          rm -rf /tmp/noted-editorver-vault
+          ./{{.BIN}} --db "$DB" add -t "Welcome to noted" -c "Your terminal knowledge base. Press / to filter, n for new note."
+          ./{{.BIN}} --db "$DB" add -t "Meeting notes" -T "work" -c "Discussed the v2 rewrite and Nord theme."
+          ./{{.BIN}} --db "$DB" add -t "Project ideas" -c "Wikilinks, command palette, quick switcher."
+          ./{{.BIN}} --db "$DB" add -t "Reading list" -c "Bubbletea v2 docs, glyphrun authoring guide."
+          ./{{.BIN}} --db "$DB" add -t "Index" -c "See [[Meeting notes]] and [[Project ideas]]."
+          ./{{.BIN}} --db "$DB" add -t "Todo" -c "$(printf '%s\n' '- [ ] Write the vault layer' '- [x] Ship the editor' '- [ ] Add command palette')"
+          ./{{.BIN}} --db "$DB" template create -n "Meeting" -c "$(printf '%s\n' '## Agenda' '' '## Notes' '' '## Action Items' '- [ ] ')"
+          FID=$(./{{.BIN}} --db "$DB" folder create "Projects" --json | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+          ./{{.BIN}} --db "$DB" add -t "Roadmap" --folder "$FID" -c "Vault, command palette, wikilinks, quick switcher."
+          # Isolated databases for CLI specs that mutate state (pin) and vault round-trip.
+          CLI_DB="/tmp/noted-cli.db"
+          RT_DB="/tmp/noted-rt.db"
+          RT_VAULT="/tmp/noted-rt-vault"
+          rm -f "$CLI_DB" "$CLI_DB-journal" "$CLI_DB-wal" "$CLI_DB-shm"
+          rm -f "$RT_DB" "$RT_DB-journal" "$RT_DB-wal" "$RT_DB-shm"
+          rm -rf "$RT_VAULT"
+          ./{{.BIN}} --db "$CLI_DB" add -t "CLI pin target" -c "Seeded for the CLI pin glyph spec."
+          ./{{.BIN}} --db "$RT_DB" --vault "$RT_VAULT" add -t "Roundtrip seed" -c "Seeded for the vault round-trip glyph spec."
+
+  e2e:
+    desc: Run the glyph terminal e2e specs (builds + seeds first)
+    deps: [seed]
+    cmds:
+      - glyph run specs/*.yml --format md --progress never
+
+  check:
+    desc: Full local gate — vet, unit tests, and e2e specs
+    cmds:
+      - task: vet
+      - task: test
+      - task: e2e
+
+  demo:
+    desc: Seed a throwaway demo database and launch the TUI against it
+    deps: [build]
+    interactive: true
+    cmds:
+      - cmd: |
+          set -e
+          DB="{{.DEMO_DB}}"
+          if [ ! -f "$DB" ]; then
+            ./{{.BIN}} --db "$DB" add -t "Welcome to noted" -c "A terminal Obsidian alternative. Press ? for help, Ctrl+K for the command palette." >/dev/null
+            ./{{.BIN}} --db "$DB" add -t "Getting started" -T "guide" -c "Open [[Welcome to noted]]. Use / to filter, n for new, Ctrl+O to jump." >/dev/null
+          fi
+      - ./{{.BIN}} --db "{{.DEMO_DB}}"
 
   install:
-    desc: Install to GOPATH/bin
-    deps: [generate]
+    desc: Install noted to your Go bin
     cmds:
       - go install .
 
-  lint:
-    desc: Run linter
-    cmds:
-      - golangci-lint run ./...
-
-  test:
-    desc: Run all unit tests
-    deps: [generate]
-    cmds:
-      - go test -v ./...
-
-  test:all:
-    desc: Run all tests including e2e
-    deps: [test, e2e]
-    cmds:
-      - echo "All tests completed"
-
   clean:
-    desc: Clean build artifacts
+    desc: Remove build and e2e artifacts
     cmds:
-      - rm -rf {{.BINARY_DIR}}
-      - rm -rf internal/db/*.go
+      - rm -f {{.BIN}}
+      - rm -rf .glyphrun/runs .glyphrun/tmp
+      - rm -f {{.E2E_DB}} {{.E2E_DB}}-journal {{.E2E_DB}}-wal {{.E2E_DB}}-shm
 
-  run:
-    desc: Run the application directly (go run .)
-    deps: [generate]
+  docs:dev:
+    desc: Start the VitePress dev server
+    dir: docs
     cmds:
-      - go run . {{.CLI_ARGS}}
+      - npx vitepress dev
 
-  dev:
-    desc: Build and run CLI
-    deps: [build]
+  docs:build:
+    desc: Build the VitePress documentation site
+    dir: docs
     cmds:
-      - ./{{.BINARY_DIR}}/{{.BINARY_NAME}} {{.CLI_ARGS}}
+      - npx vitepress build
 
-  e2e:
-    desc: Run e2e tests with vhs
-    deps: [build]
+  docs:preview:
+    desc: Preview the built VitePress documentation site
+    dir: docs
     cmds:
-      - vhs ./e2e/*.tape
-
-  e2e:init:
-    desc: Install e2e testing tools (vhs)
-    cmds:
-      - go install github.com/charmbracelet/vhs@latest
+      - npx vitepress preview

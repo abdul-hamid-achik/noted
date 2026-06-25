@@ -1,0 +1,37 @@
+version: 1
+name: noted_cli_pin
+intent: |
+  The CLI `pin` and `unpin` commands toggle a note's pinned state and emit JSON when asked; the
+  list command reflects the pin icon.
+target:
+  cmd: ["/bin/sh", "-c", "cd /Users/abdulachik/projects/noted && rm -f /tmp/noted-pin-out.json /tmp/noted-unpin-out.json; ./noted --db /tmp/noted-cli.db pin 1 --json > /tmp/noted-pin-out.json; ./noted --db /tmp/noted-cli.db unpin 1 --json > /tmp/noted-unpin-out.json; ./noted --db /tmp/noted-cli.db pin 1 >/dev/null; ./noted --db /tmp/noted-cli.db list; echo done"]
+  cwd: "/Users/abdulachik/projects/noted"
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: forbid
+steps: []
+outcomes:
+  - id: pin_json
+    description: pin command emitted JSON with pinned=true
+    verify:
+      file:
+        glob: /tmp/noted-pin-out.json
+        contains: '"pinned": true'
+        timeoutMs: 5000
+  - id: unpin_json
+    description: unpin command emitted JSON with pinned=false
+    verify:
+      file:
+        glob: /tmp/noted-unpin-out.json
+        contains: '"pinned": false'
+        timeoutMs: 5000
+  - id: list_reflects_pin
+    description: list shows the pin icon while pinned
+    verify:
+      screen:
+        contains: "📌"
+artifacts:
+  rawLog: always
+  finalScreen: always

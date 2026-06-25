@@ -12,6 +12,7 @@ import (
 
 	"github.com/abdul-hamid-achik/noted/internal/db"
 	"github.com/abdul-hamid-achik/noted/internal/memory"
+	"github.com/abdul-hamid-achik/noted/internal/notesync"
 	"github.com/abdul-hamid-achik/noted/internal/veclite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -425,6 +426,7 @@ func (s *Server) toolCreate(ctx context.Context, input createInput) (*mcp.CallTo
 	if s.syncer != nil {
 		_ = s.syncer.SyncNote(note.ID, note.Title, note.Content)
 	}
+	notesync.WriteThrough(ctx, s.queries, s.vlt, note) // mirror to the markdown vault
 
 	return textResult(map[string]any{
 		"id":      note.ID,
@@ -563,6 +565,15 @@ func (s *Server) toolUpdate(ctx context.Context, input updateInput) (*mcp.CallTo
 		content = input.Content
 	}
 
+	// Snapshot the pre-edit state as a version before overwriting it (only when it changed), so
+	// agent edits build the same history as the CLI and TUI. Abort on failure rather than silently
+	// losing history (matches the restore handler).
+	if title != existing.Title || content != existing.Content {
+		if err := notesync.SnapshotVersion(ctx, s.queries, s.vlt, input.ID, existing.Title, existing.Content); err != nil {
+			return errorResult(fmt.Sprintf("failed to save version: %v", err))
+		}
+	}
+
 	// Update the note
 	note, err := s.queries.UpdateNote(ctx, db.UpdateNoteParams{
 		ID:      input.ID,
@@ -595,6 +606,9 @@ func (s *Server) toolUpdate(ctx context.Context, input updateInput) (*mcp.CallTo
 	if s.syncer != nil {
 		_ = s.syncer.SyncNote(note.ID, note.Title, note.Content)
 	}
+	if updated, err := s.queries.GetNote(ctx, note.ID); err == nil {
+		notesync.WriteThrough(ctx, s.queries, s.vlt, updated) // mirror to the markdown vault
+	}
 
 	return textResult(map[string]any{
 		"id":      note.ID,
@@ -624,6 +638,7 @@ func (s *Server) toolDelete(ctx context.Context, input deleteInput) (*mcp.CallTo
 	if err != nil {
 		return errorResult(fmt.Sprintf("failed to delete note: %v", err))
 	}
+	notesync.Delete(s.vlt, input.ID) // remove the note's .md (and version snapshots) from the vault
 
 	return textResult(map[string]any{
 		"id":      input.ID,
@@ -935,6 +950,7 @@ func (s *Server) toolDaily(ctx context.Context, input dailyInput) (*mcp.CallTool
 	}
 
 	title := targetDate.Format("2006-01-02")
+	mutated := false // write through to the vault only if we create/append/prepend
 
 	// Try to get existing daily note
 	note, err := s.queries.GetNoteByTitle(ctx, title)
@@ -950,6 +966,7 @@ func (s *Server) toolDaily(ctx context.Context, input dailyInput) (*mcp.CallTool
 		if err != nil {
 			return errorResult(fmt.Sprintf("failed to create daily note: %v", err))
 		}
+		mutated = true
 		// Tag as "daily"
 		tag, err := s.queries.CreateTag(ctx, "daily")
 		if err == nil {
@@ -996,6 +1013,7 @@ func (s *Server) toolDaily(ctx context.Context, input dailyInput) (*mcp.CallTool
 		if err != nil {
 			return errorResult(fmt.Sprintf("failed to append: %v", err))
 		}
+		mutated = true
 	}
 
 	// Prepend content if requested
@@ -1011,6 +1029,13 @@ func (s *Server) toolDaily(ctx context.Context, input dailyInput) (*mcp.CallTool
 		})
 		if err != nil {
 			return errorResult(fmt.Sprintf("failed to prepend: %v", err))
+		}
+		mutated = true
+	}
+
+	if mutated {
+		if updated, err := s.queries.GetNote(ctx, note.ID); err == nil {
+			notesync.WriteThrough(ctx, s.queries, s.vlt, updated) // mirror the daily note to the vault
 		}
 	}
 
@@ -1182,6 +1207,7 @@ func (s *Server) toolTemplateApply(ctx context.Context, input templateApplyInput
 	if s.syncer != nil {
 		_ = s.syncer.SyncNote(note.ID, note.Title, note.Content)
 	}
+	notesync.WriteThrough(ctx, s.queries, s.vlt, note) // mirror the new note to the vault
 
 	return textResult(map[string]any{
 		"id":       note.ID,
@@ -1368,27 +1394,11 @@ func (s *Server) toolRestore(ctx context.Context, input restoreInput) (*mcp.Call
 		return errorResult(fmt.Sprintf("failed to get version: %v", err))
 	}
 
-	// Save current state as a new version before restoring
-	latestVer, err := s.queries.GetLatestVersionNumber(ctx, input.NoteID)
-	if err != nil {
-		return errorResult(fmt.Sprintf("failed to get latest version: %v", err))
-	}
-	var latestVerNum int64
-	switch v := latestVer.(type) {
-	case int64:
-		latestVerNum = v
-	case float64:
-		latestVerNum = int64(v)
-	}
-
-	_, err = s.queries.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
-		NoteID:        input.NoteID,
-		Title:         note.Title,
-		Content:       note.Content,
-		VersionNumber: latestVerNum + 1,
-	})
-	if err != nil {
-		return errorResult(fmt.Sprintf("failed to save current state: %v", err))
+	// Save current state as a new version before restoring — only if the target differs from current.
+	if version.Title != note.Title || version.Content != note.Content {
+		if err := notesync.SnapshotVersion(ctx, s.queries, s.vlt, input.NoteID, note.Title, note.Content); err != nil {
+			return errorResult(fmt.Sprintf("failed to save current state: %v", err))
+		}
 	}
 
 	_, err = s.queries.UpdateNote(ctx, db.UpdateNoteParams{
@@ -1402,6 +1412,9 @@ func (s *Server) toolRestore(ctx context.Context, input restoreInput) (*mcp.Call
 
 	if s.syncer != nil {
 		_ = s.syncer.SyncNote(input.NoteID, version.Title, version.Content)
+	}
+	if updated, err := s.queries.GetNote(ctx, input.NoteID); err == nil {
+		notesync.WriteThrough(ctx, s.queries, s.vlt, updated) // mirror the restored content to the vault
 	}
 
 	return textResult(map[string]any{

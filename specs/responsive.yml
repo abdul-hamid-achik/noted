@@ -1,0 +1,35 @@
+version: 1
+name: noted_responsive
+intent: |
+  noted re-lays out across terminal sizes: sidebar visible when wide, collapses when narrow
+  (content keeps rendering), and a "too small" notice appears on tiny terminals.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Settings" }, timeoutMs: 8000 }
+  - snapshot: wide_120x40
+  - resize: { cols: 80, rows: 24 }
+  - wait: { screen: { contains: "Settings" }, timeoutMs: 3000 }   # sidebar still visible at 80
+  - snapshot: medium_80x24
+  - resize: { cols: 64, rows: 20 }
+  - wait: { screen: { notContains: "Settings" }, timeoutMs: 3000 } # sidebar collapsed below 70
+  - wait: { screen: { contains: "Notes" }, timeoutMs: 3000 }       # content still renders
+  - snapshot: narrow_64x20
+  - resize: { cols: 30, rows: 10 }
+  - wait: { screen: { contains: "too small" }, timeoutMs: 3000 }   # tiny terminal notice
+  - snapshot: tiny_30x10
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: final_too_small
+    description: final screen shows the too-small notice
+    verify: { screen: { contains: "too small" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

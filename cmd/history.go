@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/abdul-hamid-achik/noted/internal/db"
+	"github.com/abdul-hamid-achik/noted/internal/notesync"
 	"github.com/spf13/cobra"
 )
 
@@ -226,20 +227,14 @@ var restoreCmd = &cobra.Command{
 			return fmt.Errorf("failed to get version: %w", err)
 		}
 
-		// Save current state as a new version before restoring
-		latestVerNum, err := getLatestVersionNumber(ctx, id)
-		if err != nil {
-			return fmt.Errorf("failed to get latest version number: %w", err)
-		}
+		vlt := openVault(cmd)
 
-		_, err = database.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
-			NoteID:        id,
-			Title:         note.Title,
-			Content:       note.Content,
-			VersionNumber: latestVerNum + 1,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to save current state: %w", err)
+		// Save current state as a new version before restoring — but only if the target actually
+		// differs from the current note (restoring to identical content is a no-op, no snapshot).
+		if version.Title != note.Title || version.Content != note.Content {
+			if err := notesync.SnapshotVersion(ctx, database, vlt, id, note.Title, note.Content); err != nil {
+				return fmt.Errorf("failed to save current state: %w", err)
+			}
 		}
 
 		// Restore the note to the target version
@@ -250,6 +245,12 @@ var restoreCmd = &cobra.Command{
 		})
 		if err != nil {
 			return fmt.Errorf("failed to restore note: %w", err)
+		}
+
+		// Mirror the restored content to the vault (as edit/add/delete do), so a later vault→index
+		// rebuild — e.g. the TUI file-watcher firing — doesn't revert the restore from a stale .md.
+		if updated, err := database.GetNote(ctx, id); err == nil {
+			notesync.WriteThrough(ctx, database, vlt, updated)
 		}
 
 		if asJSON {
@@ -269,27 +270,10 @@ var restoreCmd = &cobra.Command{
 	},
 }
 
-// getLatestVersionNumber retrieves the latest version number for a note.
-func getLatestVersionNumber(ctx context.Context, noteID int64) (int64, error) {
-	result, err := database.GetLatestVersionNumber(ctx, noteID)
-	if err != nil {
-		return 0, err
-	}
-	// COALESCE returns interface{} via sqlc; handle the type assertion
-	switch v := result.(type) {
-	case int64:
-		return v, nil
-	case float64:
-		return int64(v), nil
-	default:
-		return 0, fmt.Errorf("unexpected type from GetLatestVersionNumber: %T", result)
-	}
-}
-
 // lineDiff produces a simple line-by-line diff between old and new content.
-func lineDiff(old, new string) string {
-	oldLines := strings.Split(old, "\n")
-	newLines := strings.Split(new, "\n")
+func lineDiff(oldText, newText string) string {
+	oldLines := strings.Split(oldText, "\n")
+	newLines := strings.Split(newText, "\n")
 
 	var b strings.Builder
 

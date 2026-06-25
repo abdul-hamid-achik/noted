@@ -1,0 +1,39 @@
+version: 1
+name: noted_theme_nord
+intent: |
+  The Nord (dark) theme is wired into the real components, not just declared. Assert exact Nord
+  colors on the sidebar title, the active/inactive nav rows, and the notes-list title bar.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - snapshot: themed
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  # Sidebar brand sits on row 0 (no panel top padding), so nav rows are Notes=2, Search=3, …
+  - id: sidebar_title_frost
+    description: sidebar title "noted" is Nord8 frost on Nord1 surface, bold
+    verify:
+      cell: { x: 1, y: 0, char: "n", style: { fg: "#88c0d0", bg: "#3b4252", bold: true } }
+  - id: active_nav_highlight
+    description: the active nav row uses Nord6 text on the Nord2 selection background, bold
+    verify:
+      cell: { x: 1, y: 2, char: "▸", style: { fg: "#eceff4", bg: "#434c5e", bold: true } }
+  - id: inactive_nav_muted
+    description: inactive nav rows use Nord4 muted text on the Nord1 sidebar surface
+    verify:
+      cell: { x: 3, y: 3, char: "S", style: { fg: "#d8dee9", bg: "#3b4252" } }
+  - id: list_title_bar
+    description: the notes list title bar is Nord0 text on a Nord8 accent bar, bold
+    verify:
+      cell: { x: 33, y: 0, char: "N", style: { fg: "#2e3440", bg: "#88c0d0", bold: true } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

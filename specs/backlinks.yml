@@ -1,0 +1,50 @@
+version: 1
+name: noted_backlinks
+intent: |
+  Backlinks work: saving a note with [[links]] records them, and opening a linked note shows the
+  linking note in the Ctrl+B backlinks panel.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  # Open Index (which links to Meeting notes) and SAVE it so links are recorded.
+  - press: "ctrl+o"
+  - wait: { screen: { contains: "Jump to Note" }, timeoutMs: 3000 }
+  - type: "Index"
+  - wait: { screen: { contains: "Index" }, timeoutMs: 3000 }
+  - press: "enter"
+  - wait: { screen: { contains: "[[Meeting notes]]" }, timeoutMs: 3000 }
+  - press: "ctrl+s"
+  - wait: { screen: { contains: "saved" }, timeoutMs: 3000 }
+  - press: "esc"
+  - wait: { screen: { contains: "n new" }, timeoutMs: 3000 }
+  # Open Meeting notes and view its backlinks -> should list Index.
+  - press: "ctrl+o"
+  - wait: { screen: { contains: "Jump to Note" }, timeoutMs: 3000 }
+  - type: "Meeting"
+  - wait: { screen: { contains: "Meeting notes" }, timeoutMs: 3000 }
+  - press: "enter"
+  - wait: { screen: { contains: "Discussed the v2 rewrite" }, timeoutMs: 3000 }
+  - press: "ctrl+b"
+  - wait: { screen: { contains: "Backlinks" }, timeoutMs: 3000 }
+  - wait: { screen: { contains: "Index" }, timeoutMs: 3000 }
+  - snapshot: backlinks
+  - press: "enter"                                             # jump to the backlink (Index)
+  - wait: { screen: { contains: "[[Meeting notes]]" }, timeoutMs: 3000 }
+  - press: "esc"
+  - wait: { screen: { contains: "n new" }, timeoutMs: 3000 }
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: backlink_navigated
+    description: backlinks panel listed the linking note and we returned to the list
+    verify: { screen: { contains: "Welcome to noted" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

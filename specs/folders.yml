@@ -1,0 +1,34 @@
+version: 1
+name: noted_folders
+intent: |
+  Folders view lists folders; selecting one filters the notes list to that folder, and Esc clears
+  the filter back to all notes.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "4"                                                   # keyboard nav -> Folders view
+  - wait: { screen: { contains: "Projects" }, timeoutMs: 3000 }
+  - snapshot: folders_list
+  - press: "enter"                                              # filter notes by the selected folder
+  - wait: { screen: { contains: "Notes / Projects" }, timeoutMs: 3000 }       # filtered list title
+  - wait: { screen: { contains: "Roadmap" }, timeoutMs: 3000 }                # note that's in the folder
+  - wait: { screen: { notContains: "Welcome to noted" }, timeoutMs: 3000 }    # notes outside it excluded
+  - snapshot: folder_filtered
+  - press: "esc"                                               # clear the filter
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 3000 }       # all notes back
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: filter_cleared
+    description: after clearing the folder filter, all notes are listed again
+    verify: { screen: { contains: "Welcome to noted" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

@@ -1,0 +1,38 @@
+version: 1
+name: noted_mouse
+intent: |
+  Mouse works via bubblezone hit-testing (no hardcoded coordinates in the app): clicking sidebar
+  nav entries switches views in both directions, and clicking a notes row opens it in the editor.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  # Click the "Settings" sidebar entry -> placeholder view.
+  # (Sidebar brand is on row 0, so nav rows are: Notes=2 … Settings=10.)
+  - mouse: { x: 4, y: 10, button: left, action: click }
+  - wait: { screen: { contains: "Nord (dark)" }, timeoutMs: 3000 }   # Settings view (now real)
+  - snapshot: settings_clicked
+  # Click "Notes" sidebar entry -> back to the list.
+  - mouse: { x: 4, y: 2, button: left, action: click }
+  - wait: { screen: { contains: "Meeting notes" }, timeoutMs: 3000 }
+  # Click the first notes row -> opens it in the editor (split shows the PREVIEW pane).
+  - mouse: { x: 40, y: 4, button: left, action: click }
+  - wait: { screen: { contains: "PREVIEW" }, timeoutMs: 3000 }
+  - snapshot: row_clicked_editor
+  - press: "esc"
+  - wait: { screen: { contains: "n new" }, timeoutMs: 3000 }   # notes footer (editor footer lacks it)
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: clicks_round_trip
+    description: nav + row clicks land us back on the notes list
+    verify: { screen: { contains: "Meeting notes" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

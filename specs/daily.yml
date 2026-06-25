@@ -1,0 +1,30 @@
+version: 1
+name: noted_daily
+intent: |
+  The Daily view opens (creating if needed) today's daily note in the editor.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "6"                                                   # keyboard nav -> Daily
+  - wait: { screen: { contains: "Daily Note" }, timeoutMs: 3000 }
+  - snapshot: daily
+  - press: "enter"                                             # open/create today's note -> editor
+  - wait: { screen: { contains: "PREVIEW" }, timeoutMs: 3000 }
+  - press: "esc"
+  - wait: { screen: { contains: "n new" }, timeoutMs: 3000 }    # notes footer (robust marker)
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: back_on_notes
+    description: daily opens the editor then returns to the notes list
+    verify: { screen: { contains: "Welcome to noted" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

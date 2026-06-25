@@ -67,8 +67,8 @@ func runMCP(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Create MCP server
-	server := notedmcp.NewServer(database, conn, syncer)
+	// Create MCP server, with vault write-through so agent edits land in the markdown vault too.
+	server := notedmcp.NewServer(database, conn, syncer).WithVault(openVault(cmd))
 
 	// Setup context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())

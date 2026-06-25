@@ -1,0 +1,34 @@
+version: 1
+name: noted_writethrough
+intent: |
+  Saving a note in the editor writes it through to the markdown vault as a .md file.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "n"                                                   # new note (title focused)
+  - type: "Vault writethrough note"
+  - press: "tab"                                                # focus content
+  - type: "created by the e2e write-through test"
+  - press: "ctrl+s"                                             # save -> write-through to the vault
+  - wait: { screen: { contains: "saved" }, timeoutMs: 3000 }
+  - press: "esc"
+  - wait: { screen: { contains: "n new" }, timeoutMs: 3000 }
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: vault_file_written
+    description: the saved note exists as a markdown file in the vault
+    verify:
+      file:
+        glob: /tmp/noted-e2e-vault/vault-writethrough-note*.md
+        contains: "Vault writethrough note"
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

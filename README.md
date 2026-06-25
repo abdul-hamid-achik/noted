@@ -1,6 +1,12 @@
 # noted
 
-A fast, lightweight CLI knowledge base for capturing and organizing notes from your terminal. Includes an MCP server for AI agent integration and an embedded web interface.
+A terminal-only **Obsidian alternative**: a fast, agents-first notes app for capturing, organizing,
+and reviewing notes — without ever leaving the terminal. It pairs an interactive **Nord-themed TUI**
+(for humans) with an **MCP server** and **JSON-output CLI** (for AI agents). Single Go binary,
+local SQLite, no web UI.
+
+> Built on charm.land's bubbletea **v2** stack, with a markdown vault as the on-disk source of
+> truth. See [`AGENTS.md`](AGENTS.md) for architecture and conventions.
 
 ## Features
 
@@ -19,8 +25,8 @@ A fast, lightweight CLI knowledge base for capturing and organizing notes from y
 - **Source tracking** - Track where notes originated (code reviews, meetings, etc.)
 - **Import/Export** - Markdown, JSON, and JSONL formats with YAML frontmatter
 - **Editor integration** - Uses your `$EDITOR` for composing longer notes
-- **MCP Server** - Expose notes to AI agents like Claude via Model Context Protocol (27 tools)
-- **Web interface** - Embedded Vue 3 web UI with CodeMirror editor and Nord theme
+- **MCP Server** - Expose notes to AI agents like Claude via Model Context Protocol (26 tools)
+- **Interactive TUI** - Nord-themed terminal UI (charm.land bubbletea v2) with mouse + keyboard, a notes browser, a live-preview markdown editor, search, and tag/folder filtering — responsive to any terminal size
 - **Semantic search** - Optional vector similarity search powered by veclite
 - **Portable** - Single binary, SQLite database, XDG-compliant storage
 
@@ -42,8 +48,8 @@ noted grep "roadmap"
 # Open today's daily note
 noted daily
 
-# Launch web interface
-noted serve --open
+# Launch the interactive TUI (run with no arguments)
+noted
 ```
 
 ## Installation
@@ -56,7 +62,7 @@ brew install abdul-hamid-achik/tap/noted
 
 ### Go Install
 
-Requires Go 1.21 or later:
+Requires Go 1.25 or later:
 
 ```bash
 go install github.com/abdul-hamid-achik/noted@latest
@@ -76,7 +82,7 @@ Available for:
 ```bash
 git clone https://github.com/abdul-hamid-achik/noted.git
 cd noted
-task build      # or: go build -o bin/noted .
+task build      # builds ./noted  (or: go build -o noted .)
 task install    # or: go install .
 ```
 
@@ -215,6 +221,47 @@ noted tags --delete-unused
 | `--count` | `-c` | Show note count per tag |
 | `--delete-unused` | `-d` | Delete tags with no notes |
 
+### Organizing with Folders
+
+Group notes into (optionally nested) folders. Folder membership is written to each note's
+frontmatter, so it survives a vault export/import round-trip:
+
+```bash
+# Create a folder (nest under another with --parent)
+noted folder create "Projects"
+noted folder create "Active" --parent 1
+
+# List folders (shows parent ids)
+noted folder list
+
+# Put a note in a folder when adding it
+noted add -t "Roadmap" --folder 1 -c "Q3 plan"
+
+# List the notes inside a folder
+noted list --folder 1
+
+# Delete a folder (its notes are moved back to the root)
+noted folder delete 1
+```
+
+### Pinning Notes
+
+Pin important notes so they sort to the top of `noted list` and the TUI:
+
+```bash
+noted pin 1
+noted unpin 1
+```
+
+### Statistics
+
+Print a summary of the knowledge base (note/tag/link counts, etc.):
+
+```bash
+noted stats
+noted stats --json
+```
+
 ### Searching Notes
 
 Find notes by text in title or content:
@@ -300,7 +347,10 @@ noted add -t "Sprint Retro" --template meeting
 
 ### Version History
 
-Every edit automatically saves a version snapshot. View and restore previous versions:
+Every edit saves a version snapshot of the previous state — consistently across the CLI (`edit`,
+`restore`), the **TUI editor** (on save), and the **MCP** `update_note`/`restore_version` tools.
+Snapshots are also written into the vault (`.noted/versions/`) so history is durable and survives an
+index rebuild. View and restore previous versions:
 
 ```bash
 # List version history for a note
@@ -366,6 +416,9 @@ noted deadends
 
 # Find broken wikilinks
 noted unresolved
+
+# Show every note that links to a given note (backlinks)
+noted backlinks 1
 ```
 
 ### Random Note
@@ -521,23 +574,42 @@ noted import ~/exports/ -T "imported,backup"
 | `--recursive` | `-r` | Scan subdirectories |
 | `--tags` | `-T` | Add tags to all imported notes |
 
-### Web Interface
+### Terminal UI (TUI)
 
-Launch the embedded web UI for a graphical experience:
+Run `noted` with no arguments to launch the interactive, Nord-themed terminal UI. It's optimized for
+**Ghostty** (truecolor) but works in any terminal, and is responsive down to small sizes (the sidebar
+collapses on narrow terminals; a notice appears if the terminal is too small).
 
 ```bash
-# Start web server on default port (3000)
-noted serve
-
-# Specify port and auto-open browser
-noted serve --port 8080 --open
+noted                      # launch the TUI on your real database
+noted --db /tmp/demo.db    # launch against a specific database
 ```
 
-The web interface includes:
-- CodeMirror 6 editor with vim mode
-- Nord theme throughout
-- Live updates via SSE
-- Full note management (create, edit, delete, search)
+**Views** (switch with the digit keys `1`–`9` or by clicking the sidebar):
+
+| Key | View | What it does |
+|-----|------|--------------|
+| `1` | Notes | Browse notes; open in the editor |
+| `2` | Search | Live full-content search; open a result |
+| `3` | Tags | Pick a tag to filter the notes list |
+| `4` | Folders | Pick a folder to filter the notes list |
+| `5` | Tasks | Extracted checkboxes; `space` toggles done |
+| `6` | Daily | Open/create today's daily note |
+| `7` | Templates | New note from a template |
+| `8` | Dashboard | Knowledge-base stat cards |
+| `9` | Settings | Theme / paths / keybindings |
+
+**Keybindings:**
+
+| Context | Keys |
+|---------|------|
+| Global | `1`–`9` switch view · `Ctrl+K` command palette · `Ctrl+O` quick switcher · `Tab` toggle sidebar · `?` help · `q` / `Ctrl+C` quit |
+| Notes | `↑`/`↓` (or `j`/`k`) move · `/` filter · `n` new note · `Enter`/click open · `d` delete (press twice) · `Esc` clear tag/folder filter |
+| Editor | type `[[` for link autocomplete · `Ctrl+S` save · `Ctrl+L` follow a `[[wikilink]]` · `Ctrl+B` backlinks · `Tab` title/content · `Ctrl+P` split↔edit · `Esc` back |
+| Search | type to search · `↑`/`↓` select · `Enter` open · `Esc` back |
+| Tags / Folders | `↑`/`↓` move · `Enter` show notes · `Esc` back |
+
+Mouse: click sidebar entries and list rows, scroll lists with the wheel, click editor panes to focus.
 
 ### Version Information
 
@@ -551,7 +623,7 @@ noted version --json
 
 ## MCP Server
 
-noted includes an MCP (Model Context Protocol) server that exposes your knowledge base to AI agents like Claude. With 27 tools covering notes, daily notes, templates, tasks, versioning, and link health, agents get full access to your knowledge base.
+noted includes an MCP (Model Context Protocol) server that exposes your knowledge base to AI agents like Claude. With 26 tools covering notes, daily notes, templates, tasks, versioning, and link health, agents get full access to your knowledge base.
 
 ### Starting the Server
 
@@ -683,6 +755,70 @@ noted_forget(older_than_days=30, importance_below=2, dry_run=true)
 - **Importance levels**: 1-5 scale for prioritizing memory retention
 - **Lazy cleanup**: Expired memories are automatically removed during recall operations
 
+## Markdown Vault
+
+noted can mirror your notes to a **markdown vault** — plain `.md` files with YAML frontmatter — so
+agents, editors, `git`, and other tools can read and diff them directly. The vault lives at
+`~/.local/share/noted/vault` by default (override with `$NOTED_VAULT`).
+
+```bash
+# Print the vault directory
+noted vault path
+
+# Export every note to the vault as a .md file (id, title, tags, timestamps in frontmatter)
+noted vault export
+
+# Export to a specific directory
+noted vault export --path ~/Documents/noted-vault
+
+# Rebuild the SQLite index FROM the vault (vault = source of truth; preserves note ids).
+# Runs as a preview; add --force to apply.
+noted vault import
+noted vault import --force
+```
+
+Each file looks like:
+
+```markdown
+---
+id: 1
+title: Meeting notes
+tags:
+  - work
+created: 2026-06-15T13:00:00Z
+updated: 2026-06-15T13:00:00Z
+---
+
+Discussed the v2 rewrite and Nord theme.
+```
+
+`noted vault import --force` rebuilds the index (notes, tags, folders, `[[wikilink]]` backlinks, and
+version history) from the vault, preserving each note's id. **Agent memories** (`noted remember`) live
+only in the index, not the vault; an in-place rebuild preserves them, but rebuilding a brand-new empty
+database from only a vault won't have them.
+
+**Version history is stored in the vault too.** Each snapshot is written to a hidden
+`.noted/versions/<note-id>/<version>.md` file on `vault export` (and automatically before any index
+rebuild), and restored on `vault import` — so your edit history survives a rebuild and travels with
+the vault in `git`. The `.noted/` directory never shows up as a note.
+
+**Write-through:** every note create/update/delete updates the vault automatically — in the TUI
+(editor save, task toggle, daily note), the CLI (`add`, `edit`, `delete`), *and* the MCP server, so an
+agent's edits land in the vault just like yours. Renames reuse the same file (no orphans). Point the
+app at a specific vault with `--vault` (or `$NOTED_VAULT`):
+
+```bash
+noted --vault ~/Documents/noted-vault          # TUI against a chosen vault
+noted --vault ~/Documents/noted-vault add -t "Idea" -c "..."   # CLI write-through
+```
+
+So an agent running `noted add …` (or you editing in the TUI) lands a `.md` in the vault instantly.
+
+**Live two-way sync.** While the TUI is running it watches the vault directory. When a `.md` file
+changes outside the app — an agent writing a note, your `$EDITOR`, Obsidian, or `git pull` — noted
+re-indexes and refreshes the current view automatically (you'll see a `↻ vault synced` note in the
+status bar). The vault is the source of truth in both directions.
+
 ## Semantic Search
 
 Enable semantic search to find notes by meaning, not just keywords.
@@ -736,7 +872,8 @@ noted follows the XDG Base Directory Specification:
 
 | Path | Description |
 |------|-------------|
-| `~/.local/share/noted/noted.db` | SQLite database |
+| `~/.local/share/noted/noted.db` | SQLite database (index) |
+| `~/.local/share/noted/vault` | Markdown vault (`.md` files) — override with `$NOTED_VAULT` |
 | `~/.local/share/noted/vectors.veclite` | Vector database (optional) |
 
 ### Environment Variables
@@ -744,6 +881,7 @@ noted follows the XDG Base Directory Specification:
 | Variable | Description |
 |----------|-------------|
 | `EDITOR` | Editor for composing notes (default: `nvim`) |
+| `NOTED_VAULT` | Markdown vault directory (default: `~/.local/share/noted/vault`) |
 | `NOTED_VECLITE_PATH` | Path to veclite database for semantic search |
 | `NOTED_EMBEDDING_MODEL` | Embedding model for semantic search |
 | `OLLAMA_HOST` | Ollama server URL |
@@ -772,13 +910,17 @@ noted/
 │   ├── forget.go          # Delete memories
 │   ├── export.go          # Export to markdown/JSON/JSONL
 │   ├── import.go          # Import markdown files
-│   ├── serve.go           # Web interface server
 │   ├── mcp.go             # MCP server command
 │   ├── sync.go            # Sync to veclite
 │   ├── version.go         # Version info
-│   └── editor.go          # Editor integration
-├── web/                    # Frontend source (Vue 3 SPA)
+│   └── editor.go          # $EDITOR integration helper
 ├── internal/
+│   ├── tui/               # Terminal UI (charm.land bubbletea v2)
+│   │   ├── root.go        # App root model: layout, global keys, mouse, theme
+│   │   ├── view.go        # View interface + sidebar nav
+│   │   ├── view_*.go      # one screen each: notes, editor, search, tags, folders
+│   │   ├── theme/         # Nord palette + per-component theming
+│   │   └── layout/        # responsive region engine (+ tests)
 │   ├── config/            # XDG-compliant configuration
 │   ├── db/                # Database layer (sqlc)
 │   │   ├── schema.sql     # Database schema
@@ -787,14 +929,13 @@ noted/
 │   │   ├── migrations/    # SQL migration files
 │   │   └── *.go           # Generated code
 │   ├── memory/            # Shared memory logic
-│   ├── mcp/               # MCP server (27 tools)
-│   │   ├── server.go      # Server setup and transport
-│   │   └── tools.go       # Tool handlers
-│   ├── web/               # Web server + API handlers + embed
+│   ├── mcp/               # MCP server (server.go + tools.go)
 │   └── veclite/           # Semantic search integration
-├── main.go                # Entry point
-├── Taskfile.yml           # Build tasks
-└── sqlc.yaml              # sqlc configuration
+├── specs/                  # glyph (glyphrun) e2e specs
+├── docs/dev/               # source-verified dev references (charm v2, glyph)
+├── main.go                 # Entry point
+├── Taskfile.yml            # Build tasks
+└── sqlc.yaml               # sqlc configuration
 ```
 
 ### Technology Stack
@@ -804,66 +945,59 @@ noted/
 - **SQL Code Gen**: [sqlc](https://sqlc.dev)
 - **MCP SDK**: [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk)
 - **Vector Search**: [veclite](https://github.com/abdul-hamid-achik/veclite)
-- **Web Frontend**: Vue 3 + Vite + Tailwind CSS v4 + CodeMirror 6
-- **Build Tool**: [Task](https://taskfile.dev)
+- **TUI**: [charm.land](https://charm.land) bubbletea/bubbles/lipgloss/huh **v2**, [bubblezone](https://github.com/lrstanley/bubblezone) (mouse), [glamour](https://github.com/charmbracelet/glamour) (markdown)
+- **E2E tests**: [glyphrun](https://) (`glyph` CLI, real-PTY terminal specs)
+- **Build Tool**: [Task](https://taskfile.dev) (optional)
 
 ## Development
 
 ### Prerequisites
 
-- Go 1.21+
-- [Task](https://taskfile.dev) (optional, for build automation)
+- Go 1.25+
 - [sqlc](https://sqlc.dev) (for regenerating database code)
 - [golangci-lint](https://golangci-lint.run) (for linting)
-- [Bun](https://bun.sh) (for web frontend development)
+- [glyphrun](https://) (`glyph`, for running the e2e suite)
+- [Task](https://taskfile.dev) (go-task — the primary entry point; `brew install go-task`)
 
 ### Build Commands
 
+noted uses [Task](https://taskfile.dev) with single-word commands — run `task` to list them:
+
 ```bash
-# Show available tasks
-task
-
-# Generate sqlc code
-task generate
-
-# Build binary
-task build
-
-# Run tests
-task test
-
-# Run linter
-task lint
-
-# Build and run with arguments
-task dev -- list
-
-# Install to GOPATH/bin
-task install
-
-# Clean build artifacts
-task clean
-
-# Web frontend
-task web:install    # Install frontend dependencies
-task web:build      # Build frontend for embedding
-task web:dev        # Start frontend dev server
+task            # list all tasks
+task build      # build ./noted
+task run        # build and launch the TUI   (task run -- --db /tmp/x.db)
+task test       # run unit tests
+task e2e        # build + seed an isolated DB + run all glyph terminal specs
+task check      # vet + test + e2e (full local gate)
+task lint       # go vet + golangci-lint (if installed)
+task fmt        # gofmt
+task generate   # regenerate sqlc database code
+task seed       # (re)seed /tmp/noted-e2e.db with sample data
+task demo       # seed a throwaway db and launch the TUI against it
+task install    # install to your Go bin
+task clean      # remove build + e2e artifacts
 ```
+
+Without Task, the plain Go equivalents work too: `go build -o noted .` and `go test ./...`.
 
 ### Running Tests
 
 ```bash
-# Run all tests
+# Unit tests
 task test
 
-# Run with verbose output
-go test -v ./...
+# Full local gate: vet + unit tests + glyph e2e specs
+task check
 
-# Run specific test
-go test -v ./cmd -run TestDatabaseTags
+# End-to-end terminal specs only (builds + seeds first)
+task e2e
 
-# Run MCP tests
-go test -v ./internal/mcp/...
+# A single glyph spec
+glyph run specs/editor.yml --format md
+
+# A single Go test
+go test ./cmd -run TestDatabaseTags
 ```
 
 ## Contributing
@@ -897,5 +1031,6 @@ Built with:
 - [modernc.org/sqlite](https://modernc.org/sqlite) - Pure Go SQLite
 - [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) - Model Context Protocol
 - [veclite](https://github.com/abdul-hamid-achik/veclite) - Vector database
-- [Vue 3](https://vuejs.org) - Web framework
-- [Vite](https://vite.dev) - Frontend build tool
+- [Charm](https://charm.sh) - bubbletea / bubbles / lipgloss / huh (v2) TUI toolkit
+- [bubblezone](https://github.com/lrstanley/bubblezone) - terminal mouse hit-testing
+- [glamour](https://github.com/charmbracelet/glamour) - markdown rendering

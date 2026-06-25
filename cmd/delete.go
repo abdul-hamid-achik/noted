@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/abdul-hamid-achik/noted/internal/notesync"
 	"github.com/spf13/cobra"
 )
 
@@ -52,6 +53,7 @@ var deleteCmd = &cobra.Command{
 		}
 
 		ctx := context.Background()
+		vlt := openVault(cmd)
 		deletedIDs := make([]int64, 0, len(ids))
 		for _, id := range ids {
 			_, err := database.GetNote(ctx, id)
@@ -71,6 +73,7 @@ var deleteCmd = &cobra.Command{
 			if !asJSON {
 				fmt.Printf("Deleted note #%d\n", id)
 			}
+			notesync.Delete(vlt, id) // remove the note's vault file too
 			deletedIDs = append(deletedIDs, id)
 		}
 

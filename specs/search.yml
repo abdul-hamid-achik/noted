@@ -1,0 +1,34 @@
+version: 1
+name: noted_search
+intent: |
+  Full-content search: jump to the Search view with the keyboard, live-filter results as you type,
+  and open a result in the editor.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "2"                                                   # keyboard nav -> Search view
+  - wait: { screen: { contains: "Results" }, timeoutMs: 3000 }
+  - type: "Project"                                              # live substring search
+  - wait: { screen: { contains: "Project ideas" }, timeoutMs: 3000 }
+  - wait: { screen: { notContains: "Welcome to noted" }, timeoutMs: 3000 }  # non-matches filtered out
+  - snapshot: search_results
+  - press: "enter"                                              # open the selected result
+  - wait: { screen: { contains: "PREVIEW" }, timeoutMs: 3000 }
+  - press: "esc"
+  - wait: { screen: { contains: "n new" }, timeoutMs: 3000 }  # notes-view footer only (flushes ESC; robust marker)
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: back_on_notes
+    description: after searching and editing we end up on the notes list
+    verify: { screen: { contains: "Meeting notes" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

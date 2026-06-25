@@ -77,7 +77,11 @@ Examples:
 		}
 
 		for _, note := range notes {
-			fmt.Printf("#%-4d %-40s %s\n", note.ID, note.Title, note.CreatedAt.Time.Format("2006-01-02"))
+			pin := ""
+			if note.Pinned.Valid && note.Pinned.Bool {
+				pin = "📌 "
+			}
+			fmt.Printf("#%-4d %s%-37s %s\n", note.ID, pin, note.Title, note.CreatedAt.Time.Format("2006-01-02"))
 		}
 
 		return nil

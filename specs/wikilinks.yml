@@ -1,0 +1,37 @@
+version: 1
+name: noted_wikilinks
+intent: |
+  Wikilinks work: a note containing [[links]] can follow one of them (Ctrl+L) to open the linked
+  note in the editor.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "ctrl+o"                                             # quick switcher
+  - wait: { screen: { contains: "Jump to Note" }, timeoutMs: 3000 }
+  - type: "Index"
+  - wait: { screen: { contains: "Index" }, timeoutMs: 3000 }
+  - press: "enter"                                             # open the Index note in the editor
+  - wait: { screen: { contains: "[[Meeting notes]]" }, timeoutMs: 3000 }   # raw wikilink in content
+  - press: "ctrl+l"                                            # follow-link overlay
+  - wait: { screen: { contains: "Follow Link" }, timeoutMs: 3000 }
+  - snapshot: links_overlay
+  - press: "enter"                                             # follow the first link -> Meeting notes
+  - wait: { screen: { contains: "Discussed the v2 rewrite" }, timeoutMs: 3000 }  # Meeting notes content
+  - press: "esc"
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 3000 }    # back on the notes list
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: followed_link
+    description: following a [[wikilink]] opened the target note, then we returned to the list
+    verify: { screen: { contains: "Welcome to noted" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

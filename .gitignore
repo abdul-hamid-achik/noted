@@ -36,3 +36,13 @@ Thumbs.db
 
 # Vecgrep
 .vecgrep/
+
+# Glyphrun e2e run artifacts (specs themselves are committed)
+.glyphrun/runs/
+.glyphrun/tmp/
+
+# VitePress build output
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+docs/.vitepress/temp/
+node_modules/

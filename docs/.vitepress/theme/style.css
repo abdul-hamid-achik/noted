@@ -1,0 +1,10 @@
+.VPDoc {
+  padding-top: 16px;
+}
+
+.VPHomeHero {
+  .name,
+  .text {
+    font-weight: 700;
+  }
+}

@@ -1,0 +1,47 @@
+version: 1
+name: noted_vault_roundtrip
+intent: |
+  The markdown vault is the source of truth: `vault export` writes every note to .md files, then
+  deleting the database and running `vault import --force` rebuilds the index from those files
+  while preserving the note id.
+target:
+  cmd: ["/bin/sh", "-c", "cd /Users/abdulachik/projects/noted && rm -f /tmp/noted-rt-raw.md /tmp/noted-rt-import.out; ./noted --db /tmp/noted-rt.db --vault /tmp/noted-rt-vault vault export; rm -f /tmp/noted-rt.db /tmp/noted-rt.db-journal /tmp/noted-rt.db-wal /tmp/noted-rt.db-shm; ./noted --db /tmp/noted-rt.db --vault /tmp/noted-rt-vault vault import --force > /tmp/noted-rt-import.out; ./noted --db /tmp/noted-rt.db --vault /tmp/noted-rt-vault show 1 --raw > /tmp/noted-rt-raw.md; echo done"]
+  cwd: "/Users/abdulachik/projects/noted"
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: forbid
+steps: []
+outcomes:
+  - id: vault_file_exists
+    description: export produced a markdown file with the seeded note title
+    verify:
+      file:
+        glob: /tmp/noted-rt-vault/*.md
+        contains: "Roundtrip seed"
+        timeoutMs: 5000
+  - id: import_succeeded
+    description: import --force reported a successful rebuild
+    verify:
+      file:
+        glob: /tmp/noted-rt-import.out
+        contains: "Rebuilt index"
+        timeoutMs: 5000
+  - id: import_rebuilt_note
+    description: import --force rebuilt the database and the note is readable by id
+    verify:
+      file:
+        glob: /tmp/noted-rt-raw.md
+        contains: "Seeded for the vault round-trip glyph spec"
+        timeoutMs: 5000
+  - id: import_rebuilt_content
+    description: the rebuilt note still contains its original body
+    verify:
+      file:
+        glob: /tmp/noted-rt-vault/*.md
+        contains: "Seeded for the vault round-trip glyph spec"
+        timeoutMs: 5000
+artifacts:
+  rawLog: always
+  finalScreen: always

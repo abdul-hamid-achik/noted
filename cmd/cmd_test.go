@@ -7,6 +7,7 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"testing"
 
 	"github.com/abdul-hamid-achik/noted/internal/db"
+	"github.com/abdul-hamid-achik/noted/internal/notesync"
+	"github.com/abdul-hamid-achik/noted/internal/vault"
 )
 
 // setupTestDB sets up a fresh database for testing
@@ -995,19 +998,96 @@ func TestLineDiff(t *testing.T) {
 	}
 }
 
-func TestGetLatestVersionNumber_NoVersions(t *testing.T) {
-	cleanup := setupTestDB(t)
-	defer cleanup()
-
+// TestEditCmdCreatesVersion drives `noted edit` end-to-end and asserts it snapshots the pre-edit
+// state as a version AND persists that snapshot to the vault (the vlt != nil branch of SnapshotVersion).
+func TestEditCmdCreatesVersion(t *testing.T) {
+	defer setupTestDB(t)()
+	vdir := t.TempDir()
+	t.Setenv("NOTED_VAULT", vdir)
 	ctx := context.Background()
-	noteID := createTestNote(t, "No Versions", "Content", nil)
 
-	verNum, err := getLatestVersionNumber(ctx, noteID)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	id := createTestNote(t, "Doc", "ORIGINAL", nil)
+
+	_ = editCmd.Flags().Set("content", "CHANGED")
+	if err := editCmd.RunE(editCmd, []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("edit: %v", err)
 	}
-	if verNum != 0 {
-		t.Errorf("expected 0 for no versions, got %d", verNum)
+
+	versions, _ := database.GetNoteVersions(ctx, id)
+	if len(versions) != 1 {
+		t.Fatalf("expected 1 version after edit, got %d", len(versions))
+	}
+	if versions[0].Content != "ORIGINAL" {
+		t.Errorf("version content = %q, want ORIGINAL (pre-edit state)", versions[0].Content)
+	}
+
+	vlt, _ := vault.Open(vdir)
+	vv, _ := vlt.AllVersions()
+	found := false
+	for _, v := range vv {
+		if v.NoteID == id && v.Content == "ORIGINAL" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("edit's version snapshot was not persisted to the vault (.noted/versions/)")
+	}
+}
+
+// TestRestoreWritesThroughToVault is the regression for the review's MEDIUM finding: `restore` must
+// mirror the restored content to the vault, otherwise a later vault→index rebuild (e.g. the TUI file
+// watcher firing) re-reads the stale .md and silently reverts the restore.
+func TestRestoreWritesThroughToVault(t *testing.T) {
+	defer setupTestDB(t)()
+	vdir := t.TempDir()
+	t.Setenv("NOTED_VAULT", vdir)
+	ctx := context.Background()
+
+	id := createTestNote(t, "Doc", "ORIGINAL", nil)
+	vlt, err := vault.Open(vdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := database.GetNote(ctx, id); err == nil {
+		notesync.WriteThrough(ctx, database, vlt, n) // seed the vault with ORIGINAL
+	}
+
+	// Edit to NEW: snapshots version 1 (=ORIGINAL) and write-throughs NEW to the vault.
+	_ = editCmd.Flags().Set("content", "NEW")
+	if err := editCmd.RunE(editCmd, []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+
+	// Restore to version 1 (ORIGINAL).
+	_ = restoreCmd.Flags().Set("version", "1")
+	if err := restoreCmd.RunE(restoreCmd, []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if n, _ := database.GetNote(ctx, id); n.Content != "ORIGINAL" {
+		t.Fatalf("after restore, db content = %q, want ORIGINAL", n.Content)
+	}
+
+	// The vault .md must hold the restored content too (the fix).
+	vnotes, _ := vlt.List()
+	var seen bool
+	for _, vn := range vnotes {
+		if vn.ID == id {
+			seen = true
+			if vn.Content != "ORIGINAL" {
+				t.Errorf("vault content after restore = %q, want ORIGINAL (restore must write through)", vn.Content)
+			}
+		}
+	}
+	if !seen {
+		t.Fatalf("note %d not found in vault", id)
+	}
+
+	// A full rebuild from the vault must keep the restored content, not revert to NEW.
+	if _, err := notesync.Rebuild(ctx, conn, vlt); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := database.GetNote(ctx, id); n.Content != "ORIGINAL" {
+		t.Errorf("after rebuild, content = %q, want ORIGINAL (restore was reverted)", n.Content)
 	}
 }
 
@@ -1177,5 +1257,153 @@ func TestWikilinkRegex(t *testing.T) {
 				t.Errorf("input %q match %d: expected %q, got %q", tt.input, i, tt.want[i], got[i])
 			}
 		}
+	}
+}
+
+func TestVaultRoundTrip(t *testing.T) {
+	defer setupTestDB(t)()
+	ctx := context.Background()
+
+	alpha, err := database.CreateNote(ctx, db.CreateNoteParams{Title: "Alpha", Content: "links to [[Beta]]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beta, err := database.CreateNote(ctx, db.CreateNoteParams{Title: "Beta", Content: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag, err := database.CreateTag(ctx, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AddTagToNote(ctx, db.AddTagToNoteParams{NoteID: alpha.ID, TagID: tag.ID}); err != nil {
+		t.Fatal(err)
+	}
+	folder, err := database.CreateFolder(ctx, db.CreateFolderParams{Name: "Workspace"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MoveNoteToFolder(ctx, db.MoveNoteToFolderParams{
+		FolderID: sql.NullInt64{Int64: folder.ID, Valid: true}, ID: alpha.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	vdir := t.TempDir()
+	_ = vaultExportCmd.Flags().Set("path", vdir)
+	if err := vaultExportCmd.RunE(vaultExportCmd, nil); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	// Mutate the index so the rebuild has to restore state.
+	if err := database.DeleteNote(ctx, beta.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = vaultImportCmd.Flags().Set("path", vdir)
+	_ = vaultImportCmd.Flags().Set("force", "true")
+	if err := vaultImportCmd.RunE(vaultImportCmd, nil); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	// Beta restored with its original id.
+	got, err := database.GetNote(ctx, beta.ID)
+	if err != nil {
+		t.Fatalf("Beta (#%d) not restored: %v", beta.ID, err)
+	}
+	if got.Title != "Beta" {
+		t.Errorf("restored title = %q, want Beta", got.Title)
+	}
+	// Alpha's tag survived.
+	tags, _ := database.GetTagsForNote(ctx, alpha.ID)
+	if len(tags) != 1 || tags[0].Name != "x" {
+		t.Errorf("Alpha tags = %v, want [x]", tags)
+	}
+	// The [[Beta]] link was rebuilt: Beta has Alpha as a backlink.
+	back, _ := database.GetBacklinks(ctx, beta.ID)
+	found := false
+	for _, n := range back {
+		if n.ID == alpha.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected Alpha (#%d) in Beta's backlinks, got %d notes", alpha.ID, len(back))
+	}
+	// Alpha's folder membership was restored from frontmatter.
+	ra, _ := database.GetNote(ctx, alpha.ID)
+	if !ra.FolderID.Valid {
+		t.Error("Alpha's folder was not restored")
+	} else if f, _ := database.GetFolder(ctx, ra.FolderID.Int64); f.Name != "Workspace" {
+		t.Errorf("restored folder = %q, want Workspace", f.Name)
+	}
+}
+
+func TestVaultExportNoFilenameCollision(t *testing.T) {
+	defer setupTestDB(t)()
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := database.CreateNote(ctx, db.CreateNoteParams{Title: "Same Title", Content: fmt.Sprintf("n%d", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vdir := t.TempDir()
+	_ = vaultExportCmd.Flags().Set("path", vdir)
+	if err := vaultExportCmd.RunE(vaultExportCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(vdir)
+	md := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".md") {
+			md++
+		}
+	}
+	if md != 3 {
+		t.Errorf("3 same-title notes must export to 3 distinct files, got %d", md)
+	}
+}
+
+func TestVaultImportHardening(t *testing.T) {
+	defer setupTestDB(t)()
+	vdir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(vdir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("alpha.md", "---\nid: 10\ntitle: Alpha\n---\n\nSee [[Beta]].\n")
+	write("beta.md", "---\nid: 10\ntitle: Beta\n---\n\nbeta.\n") // duplicate frontmatter id
+	write("charlie.md", "---\nid: 30\ntitle: Charlie\nfolder: Work/Reports\n---\n\nnested.\n")
+
+	_ = vaultImportCmd.Flags().Set("path", vdir)
+	_ = vaultImportCmd.Flags().Set("force", "true")
+	if err := vaultImportCmd.RunE(vaultImportCmd, nil); err != nil {
+		t.Fatalf("import must not abort on a duplicate id: %v", err)
+	}
+
+	ctx := context.Background()
+	notes, _ := database.GetAllNotes(ctx)
+	if len(notes) != 3 {
+		t.Fatalf("expected 3 notes (none lost to dup id), got %d", len(notes))
+	}
+	var charlie db.Note
+	for _, n := range notes {
+		if n.Title == "Charlie" {
+			charlie = n
+		}
+	}
+	if !charlie.FolderID.Valid {
+		t.Fatal("Charlie lost its folder")
+	}
+	leaf, err := database.GetFolder(ctx, charlie.FolderID.Int64)
+	if err != nil || leaf.Name != "Reports" {
+		t.Fatalf("leaf folder = %v (err %v), want Reports", leaf.Name, err)
+	}
+	if !leaf.ParentID.Valid {
+		t.Fatal("Reports folder has no parent (hierarchy flattened)")
+	}
+	if parent, _ := database.GetFolder(ctx, leaf.ParentID.Int64); parent.Name != "Work" {
+		t.Errorf("parent folder = %q, want Work", parent.Name)
 	}
 }

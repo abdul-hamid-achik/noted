@@ -1,0 +1,31 @@
+version: 1
+name: noted_smoke
+intent: |
+  Launch noted, see the Nord-themed notes UI (sidebar + notes list with seeded notes),
+  then quit cleanly.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Notes" }, timeoutMs: 8000 }
+  - snapshot: launch
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: sidebar_title
+    description: app name shows in the sidebar
+    verify: { screen: { contains: "noted" } }
+  - id: nav_present
+    description: sidebar nav shows the Settings entry
+    verify: { screen: { contains: "Settings" } }
+  - id: seeded_note
+    description: a seeded note title is listed
+    verify: { screen: { contains: "Welcome to noted" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

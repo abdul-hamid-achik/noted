@@ -118,8 +118,8 @@ func NewSyncer(dbPath, embeddingModel string) (*Syncer, error) {
 }
 
 // NewSearcher creates a read-only syncer with a shared flock for search-only
-// paths. Use for `recall` so it doesn't block a concurrent `sync` or
-// `remember` that holds the exclusive lock.
+// paths. Use for `recall` and `forget` commands so they don't block a concurrent
+// `sync` or `remember` that holds the exclusive lock.
 func NewSearcher(dbPath, embeddingModel string) (*Syncer, error) {
 	return newSyncer(dbPath, embeddingModel, true)
 }

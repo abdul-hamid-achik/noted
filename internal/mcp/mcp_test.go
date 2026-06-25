@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"github.com/abdul-hamid-achik/noted/internal/db"
+	"github.com/abdul-hamid-achik/noted/internal/notesync"
+	"github.com/abdul-hamid-achik/noted/internal/vault"
 	"github.com/abdul-hamid-achik/noted/internal/veclite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -434,6 +436,228 @@ func TestToolSearch_NoResults(t *testing.T) {
 // ============================================================================
 // Tool: noted_update Tests
 // ============================================================================
+
+// TestToolUpdate_CreatesVersionSnapshot covers the new behavior: update_note now snapshots the
+// pre-edit state as a version before overwriting (previously it didn't version at all).
+func TestToolUpdate_CreatesVersionSnapshot(t *testing.T) {
+	queries, conn, cleanup := setupTestDB(t)
+	defer cleanup()
+	noteID := createTestNote(t, queries, "Original", "Original content", nil)
+	server := NewServer(queries, conn, nil)
+	ctx := context.Background()
+
+	if r, _, _ := server.toolUpdate(ctx, updateInput{ID: noteID, Content: "Edited content"}); r.IsError {
+		t.Fatal("update returned an error")
+	}
+
+	versions, _ := queries.GetNoteVersions(ctx, noteID)
+	if len(versions) != 1 {
+		t.Fatalf("expected 1 version snapshot, got %d", len(versions))
+	}
+	if versions[0].Content != "Original content" || versions[0].VersionNumber != 1 {
+		t.Errorf("snapshot = {v%d, %q}, want {v1, \"Original content\"}", versions[0].VersionNumber, versions[0].Content)
+	}
+}
+
+// TestToolUpdate_NoChangeNoVersion covers the change-detection guard: a no-op or tag-only update must
+// NOT create a version (otherwise idempotent re-saves would spam history).
+func TestToolUpdate_NoChangeNoVersion(t *testing.T) {
+	queries, conn, cleanup := setupTestDB(t)
+	defer cleanup()
+	noteID := createTestNote(t, queries, "Title", "Body", nil)
+	server := NewServer(queries, conn, nil)
+	ctx := context.Background()
+
+	// Identical content → no version.
+	server.toolUpdate(ctx, updateInput{ID: noteID, Title: "Title", Content: "Body"})
+	// Tag-only change → no version.
+	server.toolUpdate(ctx, updateInput{ID: noteID, Tags: []string{"work"}})
+
+	if versions, _ := queries.GetNoteVersions(ctx, noteID); len(versions) != 0 {
+		t.Errorf("no-op/tag-only updates must not create versions, got %d", len(versions))
+	}
+}
+
+// vaultNote returns the vault's copy of a note by id.
+func vaultNote(t *testing.T, vlt *vault.Vault, id int64) (vault.Note, bool) {
+	t.Helper()
+	notes, _ := vlt.List()
+	for _, n := range notes {
+		if n.ID == id {
+			return n, true
+		}
+	}
+	return vault.Note{}, false
+}
+
+// vaultContains reports whether the vault holds a note (by id) with the given content.
+func vaultContains(t *testing.T, vlt *vault.Vault, id int64, content string) bool {
+	t.Helper()
+	n, ok := vaultNote(t, vlt, id)
+	return ok && n.Content == content
+}
+
+func hasStr(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestMCPCreateMirrorsTagsToVault: tags set on create reach the vault frontmatter (WriteThrough reads
+// the live tag set, not a stale snapshot).
+func TestMCPCreateMirrorsTagsToVault(t *testing.T) {
+	queries, conn, cleanup := setupTestDB(t)
+	defer cleanup()
+	vlt, err := vault.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(queries, conn, nil).WithVault(vlt)
+	ctx := context.Background()
+
+	if r, _, _ := server.toolCreate(ctx, createInput{Title: "Tagged", Content: "x", Tags: []string{"work", "urgent"}}); r.IsError {
+		t.Fatal("create errored")
+	}
+	n, _ := queries.GetNoteByTitle(ctx, "Tagged")
+	vn, ok := vaultNote(t, vlt, n.ID)
+	if !ok {
+		t.Fatal("note not mirrored to the vault")
+	}
+	if !hasStr(vn.Tags, "work") || !hasStr(vn.Tags, "urgent") {
+		t.Errorf("vault frontmatter tags = %v, want work+urgent", vn.Tags)
+	}
+}
+
+// TestMCPDailyWritesThroughToVault: daily create/append mirrors content + the 'daily' tag + the
+// 'Daily Notes' folder, and survives a rebuild. Also checks the 'mutated' guard (a pure get re-runs
+// without changing the vault).
+func TestMCPDailyWritesThroughToVault(t *testing.T) {
+	queries, conn, cleanup := setupTestDB(t)
+	defer cleanup()
+	vlt, err := vault.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(queries, conn, nil).WithVault(vlt)
+	ctx := context.Background()
+
+	if r, _, _ := server.toolDaily(ctx, dailyInput{Date: "2026-02-20", Append: "standup notes"}); r.IsError {
+		t.Fatal("daily errored")
+	}
+	n, _ := queries.GetNoteByTitle(ctx, "2026-02-20")
+	vn, ok := vaultNote(t, vlt, n.ID)
+	if !ok || !strings.Contains(vn.Content, "standup notes") {
+		t.Fatalf("daily note not mirrored with its content: %+v (ok=%v)", vn, ok)
+	}
+	if !hasStr(vn.Tags, "daily") {
+		t.Errorf("vault daily tag missing: %v", vn.Tags)
+	}
+	if vn.Folder != "Daily Notes" {
+		t.Errorf("vault folder = %q, want Daily Notes", vn.Folder)
+	}
+
+	// Survives a rebuild (content + folder reconstructed from the vault).
+	if _, err := notesync.Rebuild(ctx, conn, vlt); err != nil {
+		t.Fatal(err)
+	}
+	if n2, _ := queries.GetNoteByTitle(ctx, "2026-02-20"); !strings.Contains(n2.Content, "standup notes") {
+		t.Errorf("after rebuild daily content = %q, want it preserved", n2.Content)
+	}
+}
+
+// TestMCPTemplateApplyWritesThroughToVault: a template-applied note lands in the vault and survives a rebuild.
+func TestMCPTemplateApplyWritesThroughToVault(t *testing.T) {
+	queries, conn, cleanup := setupTestDB(t)
+	defer cleanup()
+	vlt, err := vault.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := queries.CreateTemplate(ctx, db.CreateTemplateParams{Name: "meeting", Content: "## Agenda\n"}); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(queries, conn, nil).WithVault(vlt)
+
+	if r, _, _ := server.toolTemplateApply(ctx, templateApplyInput{TemplateName: "meeting", Title: "Sprint", Tags: []string{"work"}}); r.IsError {
+		t.Fatal("template apply errored")
+	}
+	n, _ := queries.GetNoteByTitle(ctx, "Sprint")
+	vn, ok := vaultNote(t, vlt, n.ID)
+	if !ok || !strings.Contains(vn.Content, "Agenda") {
+		t.Fatalf("template note not mirrored: %+v (ok=%v)", vn, ok)
+	}
+	if !hasStr(vn.Tags, "work") {
+		t.Errorf("vault tags = %v, want work", vn.Tags)
+	}
+	if _, err := notesync.Rebuild(ctx, conn, vlt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.GetNoteByTitle(ctx, "Sprint"); err != nil {
+		t.Errorf("template note did not survive rebuild: %v", err)
+	}
+}
+
+// TestMCPVaultWriteThrough covers finding [9]: with a vault attached, every MCP note mutation
+// (create/update/delete/restore) is mirrored to the markdown vault, so agent edits survive an index
+// rebuild instead of being reverted from a stale .md.
+func TestMCPVaultWriteThrough(t *testing.T) {
+	queries, conn, cleanup := setupTestDB(t)
+	defer cleanup()
+	vlt, err := vault.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(queries, conn, nil).WithVault(vlt)
+	ctx := context.Background()
+
+	// create → vault has the note
+	res, _, _ := server.toolCreate(ctx, createInput{Title: "Agent Note", Content: "v1"})
+	if res.IsError {
+		t.Fatal("create errored")
+	}
+	created, _ := queries.GetNoteByTitle(ctx, "Agent Note")
+	id := created.ID
+	if !vaultContains(t, vlt, id, "v1") {
+		t.Fatal("create did not write the note to the vault")
+	}
+
+	// update → vault reflects the new content
+	if r, _, _ := server.toolUpdate(ctx, updateInput{ID: id, Content: "v2"}); r.IsError {
+		t.Fatal("update errored")
+	}
+	if !vaultContains(t, vlt, id, "v2") {
+		t.Fatal("update did not write through to the vault")
+	}
+
+	// restore to v1 → vault reflects the restored content AND survives a rebuild
+	if r, _, _ := server.toolRestore(ctx, restoreInput{NoteID: id, Version: 1}); r.IsError {
+		t.Fatal("restore errored")
+	}
+	if !vaultContains(t, vlt, id, "v1") {
+		t.Fatal("restore did not write through to the vault")
+	}
+	if _, err := notesync.Rebuild(ctx, conn, vlt); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := queries.GetNote(ctx, id); n.Content != "v1" {
+		t.Errorf("after rebuild content = %q, want v1 (restore reverted)", n.Content)
+	}
+
+	// delete → the note's .md is removed from the vault
+	if r, _, _ := server.toolDelete(ctx, deleteInput{ID: id}); r.IsError {
+		t.Fatal("delete errored")
+	}
+	notes, _ := vlt.List()
+	for _, n := range notes {
+		if n.ID == id {
+			t.Error("delete did not remove the note from the vault")
+		}
+	}
+}
 
 func TestToolUpdate_Success(t *testing.T) {
 	queries, conn, cleanup := setupTestDB(t)

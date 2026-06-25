@@ -1,0 +1,32 @@
+version: 1
+name: noted_cli_json
+intent: |
+  CLI commands support a --json flag for scripting; `list` and `stats` return valid JSON containing
+  the seeded notes.
+target:
+  cmd: ["/bin/sh", "-c", "cd /Users/abdulachik/projects/noted && rm -f /tmp/noted-list.json /tmp/noted-stats.json; ./noted --db /tmp/noted-e2e.db list --json > /tmp/noted-list.json; ./noted --db /tmp/noted-e2e.db stats --json > /tmp/noted-stats.json; test -s /tmp/noted-list.json && test -s /tmp/noted-stats.json; echo done"]
+  cwd: "/Users/abdulachik/projects/noted"
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: forbid
+steps: []
+outcomes:
+  - id: list_json_valid
+    description: list --json is parseable JSON array and contains a seeded note
+    verify:
+      file:
+        glob: /tmp/noted-list.json
+        contains: "Welcome to noted"
+        timeoutMs: 5000
+  - id: stats_json_valid
+    description: stats --json is parseable JSON object with a note count
+    verify:
+      file:
+        glob: /tmp/noted-stats.json
+        contains: "notes"
+        timeoutMs: 5000
+artifacts:
+  rawLog: always
+  finalScreen: always

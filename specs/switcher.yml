@@ -1,0 +1,34 @@
+version: 1
+name: noted_switcher
+intent: |
+  The Ctrl+O quick switcher opens as a centered overlay, fuzzy-filters notes by title as you type,
+  and opens the chosen note in the editor.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "ctrl+o"                                             # open the quick switcher
+  - wait: { screen: { contains: "Jump to Note" }, timeoutMs: 3000 }
+  - snapshot: switcher_open
+  - type: "meeting"                                            # fuzzy filter by title
+  - wait: { screen: { contains: "Meeting notes" }, timeoutMs: 3000 }
+  - wait: { screen: { notContains: "Welcome to noted" }, timeoutMs: 3000 }  # non-matches filtered out
+  - press: "enter"                                             # open the selected note
+  - wait: { screen: { contains: "PREVIEW" }, timeoutMs: 3000 }     # editor split view
+  - press: "esc"
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 3000 }     # back on the notes list
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: opened_note
+    description: switching to a note opened the editor and we returned to the list
+    verify: { screen: { contains: "Welcome to noted" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

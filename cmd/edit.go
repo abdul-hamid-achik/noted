@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/abdul-hamid-achik/noted/internal/db"
+	"github.com/abdul-hamid-achik/noted/internal/notesync"
 	"github.com/spf13/cobra"
 )
 
@@ -63,17 +64,7 @@ var editCmd = &cobra.Command{
 
 		// Auto-save current state as a version before updating (only if something changed)
 		if newTitle != note.Title || newContent != note.Content {
-			latestVerNum, err := getLatestVersionNumber(ctx, id)
-			if err != nil {
-				return fmt.Errorf("failed to get latest version number: %w", err)
-			}
-			_, err = database.CreateNoteVersion(ctx, db.CreateNoteVersionParams{
-				NoteID:        id,
-				Title:         note.Title,
-				Content:       note.Content,
-				VersionNumber: latestVerNum + 1,
-			})
-			if err != nil {
+			if err := notesync.SnapshotVersion(ctx, database, openVault(cmd), id, note.Title, note.Content); err != nil {
 				return fmt.Errorf("failed to save version: %w", err)
 			}
 		}
@@ -114,6 +105,10 @@ var editCmd = &cobra.Command{
 					}
 				}
 			}
+		}
+
+		if updated, err := database.GetNote(ctx, id); err == nil {
+			notesync.WriteThrough(ctx, database, openVault(cmd), updated)
 		}
 
 		if asJSON {

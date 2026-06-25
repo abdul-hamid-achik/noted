@@ -1,0 +1,36 @@
+version: 1
+name: noted_editor
+intent: |
+  Create a note end to end in the editor: open a new note, type a title, tab to the content,
+  type markdown, save it, return to the list, and confirm the new note is listed.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "n"                                                  # new note -> editor, title focused
+  - wait: { screen: { contains: "Title" }, timeoutMs: 3000 }
+  - type: "Glyph note"
+  - press: "tab"                                                # focus content
+  - type: "Hello from the glyph e2e suite."
+  - press: "ctrl+s"                                             # save
+  - wait: { screen: { contains: "saved" }, timeoutMs: 3000 }
+  - snapshot: editor_split
+  - press: "esc"                                                # back to notes
+  # Wait on a notes-list-only marker (NOT "Glyph note", which is also the editor title) so the lone
+  # ESC is processed before the next key — otherwise ESC+q coalesce into Alt+q in the input parser.
+  - wait: { screen: { contains: "Meeting notes" }, timeoutMs: 3000 }
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: note_created
+    description: the newly created note appears in the notes list
+    verify: { screen: { contains: "Glyph note" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

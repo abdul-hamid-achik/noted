@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/abdul-hamid-achik/noted/internal/db"
+	"github.com/abdul-hamid-achik/noted/internal/vault"
 	"github.com/abdul-hamid-achik/noted/internal/veclite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -20,6 +21,7 @@ type Server struct {
 	conn    *sql.DB
 	server  *mcp.Server
 	syncer  Syncer
+	vlt     *vault.Vault // optional markdown vault for write-through; nil disables it
 }
 
 // Syncer interface for optional semantic search integration
@@ -37,6 +39,14 @@ func NewServer(queries *db.Queries, conn *sql.DB, syncer Syncer) *Server {
 		conn:    conn,
 		syncer:  syncer,
 	}
+}
+
+// WithVault enables markdown-vault write-through: every note the server creates/updates/deletes is
+// mirrored to the vault (matching the CLI and TUI), so agent edits are part of the source of truth and
+// survive an index rebuild. Returns the server for chaining. A nil vault leaves write-through disabled.
+func (s *Server) WithVault(v *vault.Vault) *Server {
+	s.vlt = v
+	return s
 }
 
 // Run starts the MCP server with stdio transport

@@ -1,0 +1,38 @@
+version: 1
+name: noted_delete
+intent: |
+  A note can be deleted from the notes list with a two-press confirm (d, then d again).
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  # Create a note to delete (it becomes the newest -> selected at the top).
+  - press: "n"
+  - type: "Delete me please"
+  - press: "tab"
+  - type: "throwaway"
+  - press: "ctrl+s"
+  - wait: { screen: { contains: "saved" }, timeoutMs: 3000 }
+  - press: "esc"
+  - wait: { screen: { contains: "n new" }, timeoutMs: 3000 }               # back on notes list (flushes ESC)
+  - wait: { screen: { contains: "Delete me please" }, timeoutMs: 3000 }    # the new note is listed
+  # Two-press delete.
+  - press: "d"
+  - wait: { screen: { contains: "Press d again" }, timeoutMs: 3000 }       # armed
+  - press: "d"
+  - wait: { screen: { notContains: "Delete me please" }, timeoutMs: 3000 } # gone from the list
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: note_deleted
+    description: the note is no longer in the list after confirming delete
+    verify: { screen: { notContains: "Delete me please" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

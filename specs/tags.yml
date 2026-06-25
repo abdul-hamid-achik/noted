@@ -1,0 +1,33 @@
+version: 1
+name: noted_tags
+intent: |
+  Tags view lists tags; selecting one filters the notes list to that tag, and Esc clears the filter
+  back to all notes.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "3"                                                   # keyboard nav -> Tags view
+  - wait: { screen: { contains: "#work" }, timeoutMs: 3000 }
+  - snapshot: tags_list
+  - press: "enter"                                              # filter notes by the selected tag
+  - wait: { screen: { contains: "Notes #work" }, timeoutMs: 3000 }            # filtered list title
+  - wait: { screen: { notContains: "Welcome to noted" }, timeoutMs: 3000 }    # untagged note excluded
+  - snapshot: tag_filtered
+  - press: "esc"                                               # clear the filter
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 3000 }       # all notes back
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: filter_cleared
+    description: after clearing the tag filter, all notes are listed again
+    verify: { screen: { contains: "Welcome to noted" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

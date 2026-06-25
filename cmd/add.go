@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/abdul-hamid-achik/noted/internal/db"
+	"github.com/abdul-hamid-achik/noted/internal/notesync"
 	"github.com/spf13/cobra"
 )
 
@@ -143,6 +144,8 @@ Examples:
 				}
 			}
 		}
+
+		notesync.WriteThrough(ctx, database, openVault(cmd), note)
 
 		if asJSON {
 			result := addResult{

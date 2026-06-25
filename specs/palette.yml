@@ -1,0 +1,34 @@
+version: 1
+name: noted_palette
+intent: |
+  The Ctrl+K command palette opens as a centered overlay, fuzzy-filters commands as you type, and
+  runs the selected command (here: jump to the Search view).
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "ctrl+k"                                             # open the palette
+  - wait: { screen: { contains: "Command Palette" }, timeoutMs: 3000 }
+  - snapshot: palette_open
+  - type: "search"                                             # fuzzy filter
+  - wait: { screen: { contains: "Go to Search" }, timeoutMs: 3000 }
+  - press: "enter"                                             # run the selected command
+  - wait: { screen: { contains: "Results" }, timeoutMs: 3000 }    # we're now on the Search view
+  - press: "esc"
+  - wait: { screen: { notContains: "Results" }, timeoutMs: 3000 }   # left Search (flushes the lone ESC)
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 3000 }
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: command_ran
+    description: running a palette command navigated and we returned to the notes list
+    verify: { screen: { contains: "Welcome to noted" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }

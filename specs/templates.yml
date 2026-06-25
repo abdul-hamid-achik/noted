@@ -1,0 +1,31 @@
+version: 1
+name: noted_templates
+intent: |
+  The Templates view lists templates; selecting one creates a new note pre-filled from the template
+  and opens it in the editor.
+target:
+  cmd: ["./noted", "--db", "/tmp/noted-e2e.db", "--vault", "/tmp/noted-e2e-vault"]
+  cwd: "."
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: require
+steps:
+  - wait: { screen: { contains: "Welcome to noted" }, timeoutMs: 8000 }
+  - press: "7"                                                   # keyboard nav -> Templates
+  - wait: { screen: { contains: "Meeting" }, timeoutMs: 3000 }  # the seeded template
+  - snapshot: templates
+  - press: "enter"                                             # new note from template -> editor
+  - wait: { screen: { contains: "Agenda" }, timeoutMs: 3000 }  # template content pre-filled
+  - press: "esc"
+  - wait: { screen: { contains: "n new" }, timeoutMs: 3000 }    # notes footer (robust marker)
+  - press: "q"
+  - wait: { process: { exited: true }, timeoutMs: 5000 }
+outcomes:
+  - id: back_on_notes
+    description: a template opens a pre-filled editor, then we return to the notes list
+    verify: { screen: { contains: "Welcome to noted" } }
+  - id: clean_exit
+    description: app exits 0 on quit
+    verify: { process: { exitCode: 0 } }
