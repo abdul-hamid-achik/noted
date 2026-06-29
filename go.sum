@@ -12,6 +12,8 @@ github.com/abdul-hamid-achik/veclite v0.20.0 h1:rO9PqS7GZQ3k+NlvVTd/bFukAXmHM2l7
 github.com/abdul-hamid-achik/veclite v0.20.0/go.mod h1:cQBeYc0293ZwccYVROgR264n0Os+ORzo+aHjs8kaVts=
 github.com/abdul-hamid-achik/veclite v0.22.0 h1:lVRYjRZtROrUmDT19Ihls9KvtNeOhh6QHoqd/7lY9EE=
 github.com/abdul-hamid-achik/veclite v0.22.0/go.mod h1:cQBeYc0293ZwccYVROgR264n0Os+ORzo+aHjs8kaVts=
+github.com/abdul-hamid-achik/veclite v0.22.1 h1:OJOdYT/modxrbr7Mw8+6Vhrzny1q8zyj3dGG/GJT0M0=
+github.com/abdul-hamid-achik/veclite v0.22.1/go.mod h1:cQBeYc0293ZwccYVROgR264n0Os+ORzo+aHjs8kaVts=
 github.com/alecthomas/assert/v2 v2.7.0 h1:QtqSACNS3tF7oasA8CU6A6sXZSBDqnm7RfpLl9bZqbE=
 github.com/alecthomas/assert/v2 v2.7.0/go.mod h1:Bze95FyfUr7x34QZrjL+XP+0qgp/zg8yS+TtBj1WA3k=
 github.com/alecthomas/chroma/v2 v2.14.0 h1:R3+wzpnUArGcQz7fCETQBzO5n9IMNi13iIs46aU4V9E=
