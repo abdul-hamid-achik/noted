@@ -7,7 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.1
 	charm.land/huh/v2 v2.0.0-20260226141913-a8934362ea3b
 	charm.land/lipgloss/v2 v2.0.0
-	github.com/abdul-hamid-achik/veclite v0.20.0
+	github.com/abdul-hamid-achik/veclite v0.22.0
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/lrstanley/bubblezone/v2 v2.0.0
